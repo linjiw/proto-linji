@@ -1,0 +1,33 @@
+# @package _global_
+
+defaults:
+  - amp_mlp_empty
+  - /env/getup
+
+agent:
+  config:
+    task_reward_w: 1.0
+
+    modules:
+      real_self_obs:
+        _target_: protomotions.agents.common.common.Flatten
+        num_in: ${env.config.getup_params.obs_size}
+        num_out: ${.num_in}
+        config:
+          obs_key: real_self_obs
+          normalize_obs: true
+          norm_clamp_value: 5
+
+    # Append the direction obs to the actor and critic inputs
+    model:
+      config: 
+        actor:
+          config:
+            actor_logstd: -1.9
+            mu_model:
+              config:
+                input_models:
+                  real_self_obs: ${agent.config.modules.real_self_obs}
+
+    extra_inputs:
+      real_self_obs: true

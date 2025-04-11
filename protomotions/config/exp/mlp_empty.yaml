@@ -1,0 +1,12 @@
+# @package _global_
+
+defaults:
+  - /agent/ppo/agent
+  - /env/base_env
+
+  - /agent/ppo/models/mlp_actor_empty
+  - /agent/ppo/models/mlp_critic
+
+agent:
+  config:
+    num_mini_epochs: 8

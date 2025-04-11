@@ -1,0 +1,14 @@
+# @package _global_
+
+defaults:
+  - base_env
+
+# Env structure
+env:
+  _target_: protomotions.envs.getup.env.Getup
+  config:
+    enable_height_termination: False
+    getup_params:
+      obs_size: 52
+
+# Globally accessible parameters
