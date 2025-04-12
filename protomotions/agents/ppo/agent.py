@@ -479,9 +479,14 @@ class PPO:
 
     def actor_step(self, batch_dict) -> Tuple[Tensor, Dict]:
         dist = self.model._actor(batch_dict)
-        logstd = self.model._actor.logstd
-        std = torch.exp(logstd)
-        neglogp = self.model.neglogp(batch_dict["actions"], dist.mean, std, logstd)
+        
+        # if has logstd
+        if hasattr(self.model._actor, "logstd"):
+            logstd = self.model._actor.logstd
+            std = torch.exp(logstd)
+            neglogp = self.model.neglogp(batch_dict["actions"], dist.mean, std, logstd)
+        else:
+            neglogp = -dist.log_prob(batch_dict["actions"]).sum(dim=-1)
 
         # Compute probability ratio between new and old policy.
         ratio = torch.exp(batch_dict["neglogp"] - neglogp)

@@ -84,3 +84,87 @@ class PPOModel(nn.Module):
     def neglogp(x, mean, std, logstd):
         dist = distributions.Normal(mean, std)
         return -dist.log_prob(x).sum(dim=-1)
+
+
+# model with Beta distribution
+
+class SoftPlusOffset(nn.Module):
+    def __init__(self, offset=0., scale=1.):
+        super(SoftPlusOffset, self).__init__()
+        self.offset = offset
+        self.scale = scale
+        self.softplus = nn.Softplus()
+
+    def forward(self, x):
+        return self.softplus(x) * self.scale + self.offset + 1e-6
+    
+
+class BetaOffset(distributions.Beta):
+    def __init__(self, alpha, beta, offset=-1.0, scale=2.):
+        super(BetaOffset, self).__init__(alpha, beta)
+        self.b_offset = offset
+        self.b_scale = scale
+
+    def sample(self):
+        return ((super().sample() * self.b_scale) + self.b_offset).clamp(-1.0 + 1e-6, 1.0 - 1e-6)
+
+    def log_prob(self, value):
+        x = (value - self.b_offset) / self.b_scale
+        return super().log_prob(x) - torch.log(torch.abs(torch.tensor(self.b_scale)))
+
+    def entropy(self):
+        return super().entropy() + torch.log(torch.abs(torch.tensor(self.b_scale)))
+    
+    @property
+    def mean(self):
+        return (super(BetaOffset, self).mean * self.b_scale) + self.b_offset
+    
+    @property
+    def stddev(self):
+        return super(BetaOffset, self).stddev * self.b_scale
+
+
+class PPOBetaActor(nn.Module):
+    def __init__(self, config, num_out: int):
+        super().__init__()
+        self.config = config
+        self.num_out = num_out
+        # alpha beta concentration
+        self.config.mu_model.config.trunk.num_out = 2 * num_out
+        self.ab: MultiHeadedMLP = instantiate(self.config.mu_model, num_out=2 * num_out)
+        self.softplus = SoftPlusOffset(1.0, 1.0)
+
+    def forward(self, input_dict):
+        ab = self.ab(input_dict)
+        alpha = self.softplus(ab[:, :self.num_out])
+        beta = self.softplus(ab[:, self.num_out:])
+        dist = BetaOffset(alpha, beta)
+        return dist
+
+
+class PPOBetaModel(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+        # create networks
+        self._actor: PPOBetaActor = instantiate(
+            self.config.actor,
+        )
+        self._critic: MultiHeadedMLP = instantiate(
+            self.config.critic,
+        )
+
+    def get_action_and_value(self, input_dict: dict):
+        dist = self._actor(input_dict)
+        action = dist.sample()
+        value = self._critic(input_dict).flatten()
+
+        neglogp = -dist.log_prob(action).sum(dim=-1)
+        return action, neglogp, value.flatten()
+
+    def act(self, input_dict: dict, mean: bool = True) -> torch.Tensor:
+        dist = self._actor(input_dict)
+        if mean:
+            return dist.mean
+        return dist.sample()

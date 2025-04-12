@@ -1,0 +1,34 @@
+# @package _global_
+
+agent:
+  config:
+    # Setup basic actor-critic structure
+    model:
+      config:
+        actor:
+          _target_: protomotions.agents.ppo.model.PPOBetaActor
+          _recursive_: False
+          num_out: ${robot.number_of_actions}
+          config:
+            mu_model:
+              _target_: protomotions.agents.common.mlp.MultiHeadedMLP
+              _recursive_: False
+              config:
+                num_out: ${robot.number_of_actions}
+                input_models:
+                trunk:
+                  _target_: protomotions.agents.common.mlp.MLP
+                  _recursive_: False
+                  num_out: ${robot.number_of_actions}
+                  config:
+                    layers:
+                      - units: 1024
+                        activation: tanh
+                        use_layer_norm: false
+                      - units: 512
+                        activation: tanh
+                        use_layer_norm: false
+
+        actor_optimizer:
+          _target_: torch.optim.Adam
+          lr: 2e-5

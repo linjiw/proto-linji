@@ -1,7 +1,7 @@
 # @package _global_
 
 defaults:
-  - amp_mlp_empty
+  - amp_mlp_beta
   - /env/getup
 
 env:
@@ -29,7 +29,6 @@ agent:
       config: 
         actor:
           config:
-            actor_logstd: -2.9
             mu_model:
               config:
                 input_models:

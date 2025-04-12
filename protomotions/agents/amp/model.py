@@ -31,7 +31,7 @@ from torch import nn
 from typing import List
 from hydra.utils import instantiate
 from protomotions.agents.common.mlp import MLP_WithNorm
-from protomotions.agents.ppo.model import PPOModel
+from protomotions.agents.ppo.model import PPOModel, PPOBetaModel
 
 
 class Discriminator(MLP_WithNorm):
@@ -66,6 +66,14 @@ class Discriminator(MLP_WithNorm):
 
 
 class AMPModel(PPOModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self._discriminator: Discriminator = instantiate(
+            self.config.discriminator,
+        )
+
+
+class AMPBetaModel(PPOBetaModel):
     def __init__(self, config):
         super().__init__(config)
         self._discriminator: Discriminator = instantiate(

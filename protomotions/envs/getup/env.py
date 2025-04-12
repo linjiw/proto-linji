@@ -70,6 +70,20 @@ class Getup(BaseEnv):
         out = super().step(actions)
         self.last_actions[:] = actions
         return out
+    
+    def compute_reset(self):
+        super().compute_reset()
+        # terminate at large velocity
+        root_vel = self.simulator.get_root_state().root_vel
+        root_ang_vel = self.simulator.get_root_state().root_ang_vel
+        self.terminate_buf[:] = torch.logical_or(
+            root_vel.norm(dim=-1) > 8.0,
+            self.terminate_buf
+        ).to(self.device)
+        self.terminate_buf[:] = torch.logical_or(
+            root_ang_vel.norm(dim=-1) > 16.0,
+            self.terminate_buf
+        ).to(self.device)
 
     def compute_observations(self, env_ids=None):
         super().compute_observations(env_ids)
@@ -132,5 +146,5 @@ def compute_getup_reward(
         -torch.norm(root_pos[:, 2:3] - 0.68, dim=-1) / 0.1
     )
     power = torch.abs(torch.multiply(dof_forces, dof_vel)).sum(dim=-1)
-    base_xy_vel = torch.norm(root_vel[:, :2], dim=-1)
-    return 5.0 * base_height_exp - 1.e-5 * power  # - 1.0 * base_xy_vel
+    base_xy_vel = torch.square(root_vel[:, :2]).sum(dim=-1)
+    return 1.0 * base_height_exp - 1.e-5 * power - 0.2 * base_xy_vel
