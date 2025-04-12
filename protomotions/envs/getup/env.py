@@ -42,14 +42,22 @@ class Getup(BaseEnv):
             (self.config.num_envs, self.config.getup_params.obs_size),
             device=self.device,
         )
-        # self.last_actions = torch.zeros(
-        #     (self.config.num_envs, self.get_action_size()),
-        #     device=self.device,
-        # )
+        self.last_actions = torch.zeros(
+            (self.config.num_envs, self.get_action_size()),
+            device=self.device,
+        )
         self.gravity_vec = torch_utils.to_torch(
             torch_utils.get_axis_params(-1.0, 2),
             device=self.device
         ).repeat((self.num_envs, 1))
+
+        # initialize at random initial progress
+        self.progress_buf[:] = torch.randint(
+            low=0,
+            high=self.config.max_episode_length,
+            size=(self.num_envs,),
+            device=self.device,
+        )
 
     # def reset_defaults(self):
     #     # TODO: overwrite this to get getup init state
@@ -57,6 +65,11 @@ class Getup(BaseEnv):
 
     # def reset(self, env_ids=None):
     #     return super().reset(env_ids)
+
+    def step(self, actions):
+        out = super().step(actions)
+        self.last_actions[:] = actions
+        return out
 
     def compute_observations(self, env_ids=None):
         super().compute_observations(env_ids)
@@ -74,7 +87,7 @@ class Getup(BaseEnv):
             root_states.root_ang_vel,
             dof_states.dof_pos,
             dof_states.dof_vel * 0.1,
-            # self.last_actions[env_ids]
+            self.last_actions[env_ids]
         ], dim=-1)
 
     def get_obs(self):
@@ -120,4 +133,4 @@ def compute_getup_reward(
     )
     power = torch.abs(torch.multiply(dof_forces, dof_vel)).sum(dim=-1)
     base_xy_vel = torch.norm(root_vel[:, :2], dim=-1)
-    return 5.0 * base_height_exp - 1.e-5 * power - 1.0 * base_xy_vel
+    return 5.0 * base_height_exp - 1.e-5 * power  # - 1.0 * base_xy_vel

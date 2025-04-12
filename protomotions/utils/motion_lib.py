@@ -624,6 +624,7 @@ class MotionLib(DeviceDtypeModuleMixin):
                 if "sub_motions" not in motion_entry:
                     motion_entry.sub_motions = [deepcopy(motion_entry)]
                     motion_entry.sub_motions[0].idx = motion_index
+                    motion_entry.sub_motions[0].weight = 1.0
 
                 for sub_motion in sorted(
                         motion_entry.sub_motions, key=lambda x: int(x.idx)
@@ -631,7 +632,7 @@ class MotionLib(DeviceDtypeModuleMixin):
                     curr_weight = sub_motion.weight
                     assert curr_weight >= 0
 
-                    assert motion_index == sub_motion.idx
+                    assert motion_index == sub_motion.idx, f"Motion index {motion_index} does not match sub motion index {sub_motion.idx}"
 
                     motion_weights.append(curr_weight)
 

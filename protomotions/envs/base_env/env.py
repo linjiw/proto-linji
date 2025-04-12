@@ -506,7 +506,7 @@ class BaseEnv:
 
         default_state = self.default_state
         # Create placeholder for all states
-        new_states = RobotState(
+        new_states = dict(
             root_pos=default_state.root_pos.clone(),
             root_rot=default_state.root_rot.clone(),
             dof_pos=default_state.dof_pos.clone(),
@@ -525,18 +525,18 @@ class BaseEnv:
                 ref_reset_ids
             )
             for key in new_states.keys():
-                new_states[key][ref_reset_ids] = ref_states[key]
+                new_states[key][ref_reset_ids] = ref_states.__dict__[key]
 
         default_reset_ids = env_ids[torch.logical_not(ref_init_mask)]
         if len(default_reset_ids) > 0:
             default_states = self.reset_default(default_reset_ids)
             for key in new_states.keys():
-                new_states[key][default_reset_ids] = default_states[key]
+                new_states[key][default_reset_ids] = default_states.__dict__[key]
 
         # Only return the states for the envs that are being reset
         for key in new_states.keys():
             new_states[key] = new_states[key][env_ids]
-
+        new_states = RobotState(**new_states)
         return new_states, default_reset_ids, ref_reset_ids, motion_ids, motion_times
 
     ###############################################################

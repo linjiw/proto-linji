@@ -427,7 +427,7 @@ class IsaacGymSimulator(Simulator):
             robot_num_bodies == self.robot_config.num_bodies
         ), f"Number of bodies in the config {self.robot_config.num_bodies} doesn't match provided robot {robot_num_bodies}"
         self._dof_names = self._gym.get_asset_dof_names(humanoid_asset)
-        robot_num_dof = self._gym.get_asset_dof_count(humanoid_asset)
+        self.num_act = robot_num_dof = self._gym.get_asset_dof_count(humanoid_asset)
         assert robot_num_dof == len(
             self.robot_config.dof_names
         ), f"Number of dofs in the config {len(self.robot_config.dof_names)} doesn't match provided robot {robot_num_dof}"

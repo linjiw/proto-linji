@@ -9,6 +9,6 @@ env:
   config:
     enable_height_termination: False
     getup_params:
-      obs_size: 52
+      obs_size: 75
 
 # Globally accessible parameters
