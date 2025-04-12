@@ -10,5 +10,6 @@ env:
     enable_height_termination: False
     getup_params:
       obs_size: 75
+      penalize_contact_indices: [0, 1, 2, 4, 5, 6, 9, 10, 11, 14, 15, 16, 17, 18, 22, 23, 24, 25]
 
 # Globally accessible parameters

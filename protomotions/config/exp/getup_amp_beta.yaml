@@ -6,13 +6,12 @@ defaults:
 
 env:
   config:
-    state_init: Hybrid
-    hybrid_init_prob: 0.5
+    state_init: Default
 
 agent:
   config:
-    task_reward_w: 0.5
-    num_mini_epochs: 8
+    task_reward_w: 1.0
+    num_mini_epochs: 4
 
     modules:
       real_self_obs:

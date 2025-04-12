@@ -31,6 +31,7 @@ import torch
 from torch import Tensor
 from isaac_utils import rotations, torch_utils
 from protomotions.envs.base_env.env import BaseEnv
+from protomotions.simulator.base_simulator.robot_state import RobotState
 from protomotions.simulator.base_simulator.config import MarkerConfig, VisualizationMarker, MarkerState
 
 
@@ -58,13 +59,73 @@ class Getup(BaseEnv):
             size=(self.num_envs,),
             device=self.device,
         )
+        self.penalize_contact_indices = torch.tensor(
+            self.config.getup_params.penalize_contact_indices,
+            device=self.device,
+            dtype=torch.long
+        )
 
-    # def reset_defaults(self):
-    #     # TODO: overwrite this to get getup init state
-    #     raise NotImplementedError()
+    def reset_default(self, env_ids):
+        # Adjust root position
+        default_state = self.default_state
 
-    # def reset(self, env_ids=None):
-    #     return super().reset(env_ids)
+        root_pos = default_state.root_pos[env_ids].clone()
+        root_rot = default_state.root_rot[env_ids].clone()
+        dof_pos = default_state.dof_pos[env_ids].clone()
+        root_vel = default_state.root_vel[env_ids].clone()
+        root_ang_vel = default_state.root_ang_vel[env_ids].clone()
+        dof_vel = default_state.dof_vel[env_ids].clone()
+        rigid_body_pos = default_state.rigid_body_pos[env_ids].clone()
+        rigid_body_rot = default_state.rigid_body_rot[env_ids].clone()
+        rigid_body_vel = default_state.rigid_body_vel[env_ids].clone()
+        rigid_body_ang_vel = default_state.rigid_body_ang_vel[env_ids].clone()
+
+        roll = (torch.rand(len(env_ids), device=self.device) - 0.5) * torch.pi * 0.8
+        pitch = (torch.rand(len(env_ids), device=self.device) - 0.5) * torch.pi * 0.8
+        yaw = torch.rand(len(env_ids), device=self.device) * 2 * torch.pi
+
+        base_quat = rotations.quat_from_euler_xyz(roll, pitch, yaw, w_last=True)
+        p = torch.rand(len(env_ids), device=self.device)
+        standing = p < 0.1
+        base_quat[standing] = torch.tensor([0., 0., 0., 1.], device=self.device)[None, :]  # keep the initial orientation for lying robots
+
+        # Estimate body height to keep feet near ground
+        # Assume you know the body-to-foot lowest z-offset in local frame (e.g., self.foot_clearance)
+        # Compute rotated local z offset
+        local_foot_offset = torch.tensor([0.0, 0.0, 0.68], device=self.device).view(1, 3)
+        rotated_offsets = rotations.quat_rotate(base_quat, local_foot_offset.repeat(len(env_ids), 1), w_last=True)
+        adjusted_z = rotated_offsets[:, 2]  # height to make lowest foot touch ground
+        root_pos[env_ids, 2] = adjusted_z + 0.1
+
+        root_rot[env_ids] = base_quat
+        root_pos[:, :2] = 0
+        root_pos[:, :3] += self.get_envs_respawn_position(
+            env_ids,
+            rigid_body_pos=rigid_body_pos,
+            offset=0,
+        )
+
+        # Transfer entire body to the proper coordinates
+        # ZIFAN: rigid_body_pos is not used for reset
+        rigid_body_pos[:, :, :3] -= (
+            rigid_body_pos[:, 0, :3].unsqueeze(1).clone()
+        )
+        rigid_body_pos[:, :, :3] += root_pos.unsqueeze(1)
+        
+        new_states = RobotState(
+            root_pos=root_pos,
+            root_rot=root_rot,
+            root_vel=root_vel,
+            root_ang_vel=root_ang_vel,
+            dof_pos=dof_pos,
+            dof_vel=dof_vel,
+            rigid_body_pos=rigid_body_pos,
+            rigid_body_rot=rigid_body_rot,
+            rigid_body_vel=rigid_body_vel,
+            rigid_body_ang_vel=rigid_body_ang_vel,
+        )
+
+        return new_states
 
     def step(self, actions):
         out = super().step(actions)
@@ -111,40 +172,26 @@ class Getup(BaseEnv):
 
     def compute_reward(self):
         root_states = self.simulator.get_root_state()
+        bodies_states = self.simulator.get_bodies_state()
         dof_forces = self.simulator.get_dof_forces()
         dof_states = self.simulator.get_dof_state()
-        self.rew_buf[:] = compute_getup_reward(
-            root_states.root_pos,
-            root_states.root_vel,
-            dof_states.dof_vel,
-            dof_forces,
-            self.dt
+        contact_forces = self.simulator.get_bodies_contact_buf()
+
+        base_height_exp = torch.exp(
+            -torch.norm(root_states.root_pos[:, 2:3] - 0.72, dim=-1) / 0.1
         )
+        base_head_exp = torch.exp(
+            -torch.norm(bodies_states.rigid_body_pos[:, 3, 2:3] - 1.18, dim=-1) / 0.1
+        )
+        power = torch.abs(torch.multiply(dof_forces, dof_states.dof_vel.clip(min=-5.0, max=5.0))).sum(dim=-1)
+        base_xy_vel = torch.square(root_states.root_vel[:, :2]).sum(dim=-1).clip(max=1.0)
+        contact_penalty = (contact_forces[:, self.penalize_contact_indices].sum(dim=-1) > 0.1).sum(dim=-1).float()
 
 
-#####################################################################
-###=========================jit functions=========================###
-#####################################################################
+        self.log_dict["raw/base_height_exp"] = base_height_exp.mean()
+        self.log_dict["raw/base_head_exp"] = base_head_exp.mean()
+        self.log_dict["raw/power"] = power.mean()
+        self.log_dict["raw/base_xy_vel"] = base_xy_vel.mean()
+        self.log_dict["raw/contact_penalty"] = contact_penalty.mean()
 
-@torch.jit.script
-def compute_getup_reward(
-    root_pos: Tensor,
-    root_vel: Tensor,
-    dof_vel: Tensor,
-    dof_forces: Tensor,
-    dt: float,
-) -> Tensor:
-    """Compute the reward for the getup task.
-    Args:
-        root_pos (Tensor): Root position of the robot.
-        root_vel (Tensor): Root velocity of the robot.
-        dt (float): Time step.
-    Returns:
-        Tensor: Computed reward.
-    """
-    base_height_exp = torch.exp(
-        -torch.norm(root_pos[:, 2:3] - 0.68, dim=-1) / 0.1
-    )
-    power = torch.abs(torch.multiply(dof_forces, dof_vel)).sum(dim=-1)
-    base_xy_vel = torch.square(root_vel[:, :2]).sum(dim=-1)
-    return 1.0 * base_height_exp - 1.e-5 * power - 0.2 * base_xy_vel
+        self.rew_buf[:] = 0.4 * base_height_exp + 0.4 * base_head_exp - 1.e-5 * power - 0.5 * contact_penalty
