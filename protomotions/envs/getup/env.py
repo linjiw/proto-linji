@@ -51,6 +51,8 @@ class Getup(BaseEnv):
             torch_utils.get_axis_params(-1.0, 2),
             device=self.device
         ).repeat((self.num_envs, 1))
+        robot_config = self.simulator.robot_config
+        self.head_id = robot_config.body_names.index(robot_config.head_body_name)
 
         # initialize at random initial progress
         self.progress_buf[:] = torch.randint(
@@ -59,8 +61,13 @@ class Getup(BaseEnv):
             size=(self.num_envs,),
             device=self.device,
         )
+        non_termination_contact_bodies = robot_config.non_termination_contact_bodies
+        penalize_contact_body_ids = [
+            robot_config.body_names.index(body_name)
+            for body_name in robot_config.body_names if body_name not in non_termination_contact_bodies
+        ]
         self.penalize_contact_indices = torch.tensor(
-            self.config.getup_params.penalize_contact_indices,
+            penalize_contact_body_ids,
             device=self.device,
             dtype=torch.long
         )
@@ -178,20 +185,27 @@ class Getup(BaseEnv):
         contact_forces = self.simulator.get_bodies_contact_buf()
 
         base_height_exp = torch.exp(
-            (root_states.root_pos[:, 2] - 0.69).clip(max=0.0) / 0.1
+            (root_states.root_pos[:, 2] - self.config.getup_params.target_base_height).clip(max=0.0) / 0.1
         )
-        base_head_exp = torch.exp(
-            (bodies_states.rigid_body_pos[:, 3, 2] - 1.10).clip(max=0.0) / 0.1
+        head_height_exp = torch.exp(
+            (bodies_states.rigid_body_pos[:, self.head_id, 2] - self.config.getup_params.target_head_height).clip(max=0.0) / 0.1
         )
+        base_height_norm = (root_states.root_pos[:, 2] / self.config.getup_params.target_base_height).clip(min=0.0, max=1.0)
+        head_height_norm = (bodies_states.rigid_body_pos[:, self.head_id, 2] / self.config.getup_params.target_head_height).clip(min=0.0, max=1.0)
         power = torch.abs(torch.multiply(dof_forces, dof_states.dof_vel.clip(min=-100.0, max=100.))).sum(dim=-1)
         base_vel = torch.square(root_states.root_vel).sum(dim=-1).clip(max=100.0)
         contact_penalty = (contact_forces[:, self.penalize_contact_indices].sum(dim=-1) > 0.1).sum(dim=-1).float()
 
-
         self.log_dict["raw/base_height_exp"] = base_height_exp.mean()
-        self.log_dict["raw/base_head_exp"] = base_head_exp.mean()
+        self.log_dict["raw/head_height_exp"] = head_height_exp.mean()
+        self.log_dict["raw/base_height_norm"] = base_height_norm.mean()
+        self.log_dict["raw/head_height_norm"] = head_height_norm.mean()
         self.log_dict["raw/power"] = power.mean()
         self.log_dict["raw/base_vel"] = base_vel.mean()
         self.log_dict["raw/contact_penalty"] = contact_penalty.mean()
 
-        self.rew_buf[:] = 2.0 * base_height_exp + 2.0 * base_head_exp - 1.e-5 * power - 0.5 * contact_penalty - 0.2 * base_vel
+        # self.rew_buf[:] = 2.0 * base_height_exp + 2.0 * head_height_exp - 1.e-5 * power - 0.5 * contact_penalty - 0.2 * base_vel
+        self.rew_buf[:] = \
+            self.config.getup_params.reward_scales.base_height_norm * base_height_norm + \
+            self.config.getup_params.reward_scales.base_height_norm * head_height_norm - \
+            self.config.getup_params.reward_scales.contact_penalty * contact_penalty # - 1.e-5 * power

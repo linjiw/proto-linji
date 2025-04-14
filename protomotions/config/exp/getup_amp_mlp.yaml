@@ -10,8 +10,8 @@ env:
 
 agent:
   config:
-    task_reward_w: 1.0
-    num_mini_epochs: 4
+    task_reward_w: 0.5
+    num_mini_epochs: 2
 
     modules:
       real_self_obs:

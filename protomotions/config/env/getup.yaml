@@ -10,7 +10,12 @@ env:
     enable_height_termination: False
     getup_params:
       obs_size: 75
-      penalize_contact_indices: [0, 1, 2, 4, 5, 6, 9, 10, 11, 14, 15, 16, 22, 23]
-      # Trunk, H1, H2, AL1, AL2, AL3, AR1, AR2, AR3, Waist, Hip_Pitch_Left, Hip_Roll_Left, Hip_Yaw_Left, Shank_Left, Ankle_Cross_Left,
+      target_base_height: 0.69
+      target_head_height: 1.10
+
+      reward_scales:
+        base_height_norm: 0.2
+        head_height_norm: 0.8
+        contact_penalty: -0.2
 
 # Globally accessible parameters
