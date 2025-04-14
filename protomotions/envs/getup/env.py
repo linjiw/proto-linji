@@ -178,20 +178,20 @@ class Getup(BaseEnv):
         contact_forces = self.simulator.get_bodies_contact_buf()
 
         base_height_exp = torch.exp(
-            -torch.norm(root_states.root_pos[:, 2:3] - 0.72, dim=-1) / 0.1
+            (root_states.root_pos[:, 2] - 0.69).clip(max=0.0) / 0.1
         )
         base_head_exp = torch.exp(
-            -torch.norm(bodies_states.rigid_body_pos[:, 3, 2:3] - 1.18, dim=-1) / 0.1
+            (bodies_states.rigid_body_pos[:, 3, 2] - 1.10).clip(max=0.0) / 0.1
         )
-        power = torch.abs(torch.multiply(dof_forces, dof_states.dof_vel.clip(min=-5.0, max=5.0))).sum(dim=-1)
-        base_xy_vel = torch.square(root_states.root_vel[:, :2]).sum(dim=-1).clip(max=1.0)
+        power = torch.abs(torch.multiply(dof_forces, dof_states.dof_vel.clip(min=-100.0, max=100.))).sum(dim=-1)
+        base_vel = torch.square(root_states.root_vel).sum(dim=-1).clip(max=100.0)
         contact_penalty = (contact_forces[:, self.penalize_contact_indices].sum(dim=-1) > 0.1).sum(dim=-1).float()
 
 
         self.log_dict["raw/base_height_exp"] = base_height_exp.mean()
         self.log_dict["raw/base_head_exp"] = base_head_exp.mean()
         self.log_dict["raw/power"] = power.mean()
-        self.log_dict["raw/base_xy_vel"] = base_xy_vel.mean()
+        self.log_dict["raw/base_vel"] = base_vel.mean()
         self.log_dict["raw/contact_penalty"] = contact_penalty.mean()
 
-        self.rew_buf[:] = 0.4 * base_height_exp + 0.4 * base_head_exp - 1.e-5 * power - 0.5 * contact_penalty
+        self.rew_buf[:] = 2.0 * base_height_exp + 2.0 * base_head_exp - 1.e-5 * power - 0.5 * contact_penalty - 0.2 * base_vel

@@ -10,7 +10,7 @@ env:
 
 agent:
   config:
-    task_reward_w: 1.0
+    task_reward_w: 0.5
     num_mini_epochs: 4
 
     modules:
