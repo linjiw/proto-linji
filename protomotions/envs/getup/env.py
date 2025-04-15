@@ -185,10 +185,10 @@ class Getup(BaseEnv):
         contact_forces = self.simulator.get_bodies_contact_buf()
 
         base_height_exp = torch.exp(
-            (root_states.root_pos[:, 2] - self.config.getup_params.target_base_height).clip(max=0.0) / 0.1
+            (root_states.root_pos[:, 2] - self.config.getup_params.target_base_height).clip(max=0.0) / 0.4 / self.config.getup_params.target_base_height
         )
         head_height_exp = torch.exp(
-            (bodies_states.rigid_body_pos[:, self.head_id, 2] - self.config.getup_params.target_head_height).clip(max=0.0) / 0.1
+            (bodies_states.rigid_body_pos[:, self.head_id, 2] - self.config.getup_params.target_head_height).clip(max=0.0) / 0.4 / self.config.getup_params.target_head_height
         )
         base_height_norm = (root_states.root_pos[:, 2] / self.config.getup_params.target_base_height).clip(min=0.0, max=1.0)
         head_height_norm = (bodies_states.rigid_body_pos[:, self.head_id, 2] / self.config.getup_params.target_head_height).clip(min=0.0, max=1.0)
@@ -206,6 +206,8 @@ class Getup(BaseEnv):
 
         # self.rew_buf[:] = 2.0 * base_height_exp + 2.0 * head_height_exp - 1.e-5 * power - 0.5 * contact_penalty - 0.2 * base_vel
         self.rew_buf[:] = \
+            self.config.getup_params.reward_scales.base_height_exp * base_height_exp + \
+            self.config.getup_params.reward_scales.head_height_exp * head_height_exp + \
             self.config.getup_params.reward_scales.base_height_norm * base_height_norm + \
-            self.config.getup_params.reward_scales.base_height_norm * head_height_norm - \
+            self.config.getup_params.reward_scales.base_height_norm * head_height_norm + \
             self.config.getup_params.reward_scales.contact_penalty * contact_penalty # - 1.e-5 * power

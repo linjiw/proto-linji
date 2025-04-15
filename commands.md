@@ -1,3 +1,48 @@
 ```
 CUDA_VISIBLE_DEVICES=1 python protomotions/train_agent.py +exp=full_body_tracker/mlp_single_motion_amp_flat_terrain +robot=t1 +simulator=isaacgym motion_file=/var/local/zifan/motion_data_x/CMU-t1_retargeted/01/01_01_stageii.npy +experiment_name=mlp_full_body_tracker_t1_0401 num_envs=4096 +opt=wandb ngpu=1
 ```
+
+Getup motions
+```
+[
+    '0-CMU_74_74_08_poses', 
+    '0-KIT_442_Aufstehen01_poses', 
+    '0-KIT_3_kneel_up_with_right_hand01_poses', 
+    '0-CMU_111_111_08_poses', 
+    '0-CMU_139_139_18_poses', 
+    '0-CMU_77_77_18_poses', 
+    '0-ACCAD_Female1General_c3d_A10 - lie to crouch_poses', 
+    '0-KIT_3_kneel_up_from_crawl01_poses', 
+    '0-CMU_77_77_17_poses', 
+    '0-CMU_111_111_07_poses', 
+    '0-KIT_3_kneel_up_with_left_hand01_poses', 
+    '0-CMU_77_77_16_poses', 
+    '0-CMU_84_84_08_poses', 
+    '0-CMU_139_139_16_poses', 
+    '0-CMU_140_140_02_poses', 
+    '0-CMU_22_23_Rory_22_19_poses', 
+    '0-CMU_22_23_justin_22_20_poses', 
+    '0-CMU_139_139_17_poses', 
+    '0-CMU_114_114_02_poses', 
+    '0-CMU_140_140_01_poses', 
+    '0-ACCAD_Male2MartialArtsStances_c3d_D13 -crouch to ready_poses', 
+    '0-CMU_140_140_09_poses', 
+    '0-CMU_22_23_justin_22_18_poses', 
+    '0-CMU_140_140_04_poses', 
+    '0-CMU_140_140_08_poses']
+```
+
+Motion retarget
+```
+python data/scripts/convert_amass_to_isaac.py /var/local/zifan/motion_data_x --robot-type=t1 --humanoid-type smplx --force-retarget
+```
+
+Steering task
+```
+CUDA_VISIBLE_DEVICES=1 python protomotions/train_agent.py +exp=steering_amp_mlp +robot=t1 +simulator=isaacgym +experiment_name=t1_steering_amp +motion_file=/var/local/zifan/motion_data_x/CMU-t1_retargeted/02/02_01_stageii.npy
+```
+
+Full body tracking T1
+```
+CUDA_VISIBLE_DEVICES=1 python protomotions/train_agent.py +exp=full_body_tracker/transformer_flat_terrain +robot=t1 +simulator=isaacgym motion_file=/var/local/zifan/motion_data_x/amass_t1_train.yaml +experiment_name=t1_full_body_tracker
+```

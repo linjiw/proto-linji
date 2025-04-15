@@ -14,8 +14,10 @@ env:
       target_head_height: 1.10
 
       reward_scales:
-        base_height_norm: 0.2
-        head_height_norm: 0.8
+        base_height_exp: 0.4
+        head_height_exp: 0.8
+        base_height_norm: 0.0
+        head_height_norm: 0.0
         contact_penalty: -0.2
 
 # Globally accessible parameters
