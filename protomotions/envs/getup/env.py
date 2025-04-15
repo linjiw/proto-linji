@@ -87,8 +87,8 @@ class Getup(BaseEnv):
         rigid_body_vel = default_state.rigid_body_vel[env_ids].clone()
         rigid_body_ang_vel = default_state.rigid_body_ang_vel[env_ids].clone()
 
-        roll = (torch.rand(len(env_ids), device=self.device) - 0.5) * torch.pi * 0.8
-        pitch = (torch.rand(len(env_ids), device=self.device) - 0.5) * torch.pi * 0.8
+        roll = (torch.rand(len(env_ids), device=self.device) - 0.5) * 0.0
+        pitch = (torch.randint(low=0, high=2, size=(len(env_ids),), device=self.device).float() - 0.5) * torch.pi
         yaw = torch.rand(len(env_ids), device=self.device) * 2 * torch.pi
 
         base_quat = rotations.quat_from_euler_xyz(roll, pitch, yaw, w_last=True)
@@ -99,12 +99,12 @@ class Getup(BaseEnv):
         # Estimate body height to keep feet near ground
         # Assume you know the body-to-foot lowest z-offset in local frame (e.g., self.foot_clearance)
         # Compute rotated local z offset
-        local_foot_offset = torch.tensor([0.0, 0.0, 0.68], device=self.device).view(1, 3)
-        rotated_offsets = rotations.quat_rotate(base_quat, local_foot_offset.repeat(len(env_ids), 1), w_last=True)
-        adjusted_z = rotated_offsets[:, 2]  # height to make lowest foot touch ground
-        root_pos[env_ids, 2] = adjusted_z + 0.1
+        # local_foot_offset = torch.tensor([0.0, 0.0, 0.68], device=self.device).view(1, 3)
+        # rotated_offsets = rotations.quat_rotate(base_quat, local_foot_offset.repeat(len(env_ids), 1), w_last=True)
+        # adjusted_z = rotated_offsets[:, 2]  # height to make lowest foot touch ground
+        root_pos[~standing, 2] = 0.2
 
-        root_rot[env_ids] = base_quat
+        root_rot = base_quat
         root_pos[:, :2] = 0
         root_pos[:, :3] += self.get_envs_respawn_position(
             env_ids,

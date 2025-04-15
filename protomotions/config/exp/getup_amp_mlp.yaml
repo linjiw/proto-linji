@@ -6,7 +6,8 @@ defaults:
 
 env:
   config:
-    state_init: Default
+    state_init: Hybrid
+    hybrid_init_prob: 0.5
 
 agent:
   config:
