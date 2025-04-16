@@ -79,3 +79,22 @@ def get_mean_var_with_masks(values: Tensor, masks: Tensor):
     ) ** 2
     values_var = min_sqr * sum_mask / (sum_mask - 1)
     return values_mean, values_var
+
+
+### JIT EXPORT
+from typing import Dict
+from protomotions.utils.running_mean_std import RunningMeanStd
+from protomotions.agents.ppo.model import PPOModel
+
+class ScriptablePolicyWrapper(torch.nn.Module):
+    def __init__(self, model: PPOModel):
+        super().__init__()
+        # the obs key name "real_self_obs" is hard coded here
+        running_obs_norm: RunningMeanStd = model._actor.mu.input_models.real_self_obs.running_obs_norm
+        self.mean = running_obs_norm.mean
+        self.var = running_obs_norm.var
+        self.mlp = model._actor.mu.trunk.mlp
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        obs = (obs - self.mean.float()) / (self.var.float() + 1e-6)
+        return self.mlp(obs)

@@ -225,6 +225,18 @@ class PPO:
                     relative_path = Path(os.path.relpath(save_dir / name, root_dir))
                     (root_dir / "score_based.ckpt").symlink_to(relative_path)
 
+    def export_jit(self, checkpoint: Path):
+        from protomotions.agents.ppo.utils import ScriptablePolicyWrapper
+        # Export the model to TorchScript.
+        self.model.eval()
+        scripted_model = ScriptablePolicyWrapper(self.model)
+        scripted_model.eval()
+        script = torch.jit.script(scripted_model)
+        # save jit script
+        save_path = Path(checkpoint).resolve().parent / "exported.pt"
+        script.save(save_path)
+        print(f"Exported JIT script to {save_path}")
+
     # -----------------------------
     # Experience Buffer and Training Loop
     # -----------------------------
