@@ -607,15 +607,35 @@ class PPO:
         self.eval()
         done_indices = None  # Force reset on first entry
         step = 0
+        obs_hist = []
         while self.config.max_eval_steps is None or step < self.config.max_eval_steps:
             obs = self.handle_reset(done_indices)
             # Obtain actor predictions
             actions = self.model.act(obs)
             # Step the environment
             obs, rewards, dones, terminated, extras = self.env_step(actions)
+            # save plot
+            if self.env.simulator._user_is_recording and "real_self_obs" in obs:
+                obs_hist.append(obs["real_self_obs"][0].cpu().detach().numpy())
+                print("recording step obs")
+            if not self.env.simulator._user_is_recording and len(obs_hist) > 0:
+                # save plot to file
+                import numpy as np
+                from matplotlib import pyplot as plt
+                plot_save_path = self.env.simulator._curr_user_recording_name
+                obs_hist = np.array(obs_hist)
+                fig, axes = plt.subplots(9, 9, figsize=(32, 36))
+                for i in range(obs_hist.shape[1]):
+                    axes[i // 9, i % 9].plot(obs_hist[:, i])
+                plt.tight_layout()
+                plt.savefig(f"{plot_save_path}_obs.png")
+                print(f"Obs plot saves to {plot_save_path}_obs.png")
+                obs_hist = []
+            # save plot 
             all_done_indices = dones.nonzero(as_tuple=False)
             done_indices = all_done_indices.squeeze(-1)
             step += 1
+        
 
     def post_epoch_logging(self, training_log_dict: Dict):
         end_time = time.time()
