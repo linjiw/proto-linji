@@ -18,6 +18,65 @@ env:
         head_height_exp: 0.8
         base_height_norm: 0.0
         head_height_norm: 0.0
+        power: -1.e-5
         contact_penalty: -0.2
+
+      noise:
+        gravity:
+          range: [0., 0.01]
+          operation: "additive"
+          distribution: "gaussian"
+        ang_vel:
+          range: [0., 0.1]
+          operation: "additive"
+          distribution: "gaussian"
+        dof_pos:
+          range: [0., 0.01]
+          operation: "additive"
+          distribution: "gaussian"
+        dof_vel:
+          range: [0., 0.1]
+          operation: "additive"
+          distribution: "gaussian"
+      
+      randomization:
+        base_com:
+          range: [-0.1, 0.1]
+          operation: "additive"
+          distribution: "uniform"
+        base_mass:
+          range: [0.8, 1.2]
+          operation: "scaling"
+          distribution: "uniform"
+        other_com:
+          range: [-0.005, 0.005]
+          operation: "additive"
+          distribution: "uniform"
+        other_mass:
+          range: [0.98, 1.02]
+          operation: "scaling"
+          distribution: "uniform"
+
+        friction:
+          range: [0.1, 2.0]
+          operation: "additive"
+          distribution: "uniform"
+        compliance:
+          range: [0.5, 1.5]
+          operation: "additive"
+          distribution: "uniform"
+        restitution:
+          range: [0.1, 0.9]
+          operation: "additive"
+          distribution: "uniform"
+
+          p_gains:
+            range: [0.95, 1.05]
+            operation: "scaling"
+            distribution: "uniform"
+          d_gains:
+            range: [0.95, 1.05]
+            operation: "scaling"
+            distribution: "uniform"
 
 # Globally accessible parameters

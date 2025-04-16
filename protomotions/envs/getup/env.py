@@ -30,6 +30,7 @@ import numpy as np
 import torch
 from torch import Tensor
 from isaac_utils import rotations, torch_utils
+from protomotions.envs.getup.utils import apply_randomization
 from protomotions.envs.base_env.env import BaseEnv
 from protomotions.simulator.base_simulator.robot_state import RobotState
 from protomotions.simulator.base_simulator.config import MarkerConfig, VisualizationMarker, MarkerState
@@ -53,6 +54,7 @@ class Getup(BaseEnv):
         ).repeat((self.num_envs, 1))
         robot_config = self.simulator.robot_config
         self.head_id = robot_config.body_names.index(robot_config.head_body_name)
+        self.contact_body_names = robot_config.non_termination_contact_bodies 
 
         # initialize at random initial progress
         self.progress_buf[:] = torch.randint(
@@ -71,6 +73,76 @@ class Getup(BaseEnv):
             device=self.device,
             dtype=torch.long
         )
+
+        self.base_mass_scaled = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device)
+        self._process_rigid_body_properties()
+        self._process_rigid_body_shape_properties()
+        self._process_dof_properties()
+
+    def _process_rigid_body_properties(self):
+        # this is specific to IsaacGym simulator
+        for i, (env_handle, humanoid_handle) in enumerate(zip(
+            self.simulator._envs, self.simulator._humanoid_handles)):
+
+            body_props = self.simulator._gym.get_actor_rigid_body_properties(env_handle, humanoid_handle)
+            for j in range(self.simulator._num_bodies):
+                if j == 0:  # base body
+                    body_props[j].com.x, self.base_mass_scaled[i, 0] = apply_randomization(
+                        body_props[j].com.x, self.config.getup_params["randomization"].get("base_com"), return_noise=True
+                    )
+                    body_props[j].com.y, self.base_mass_scaled[i, 1] = apply_randomization(
+                        body_props[j].com.y, self.config.getup_params["randomization"].get("base_com"), return_noise=True
+                    )
+                    body_props[j].com.z, self.base_mass_scaled[i, 2] = apply_randomization(
+                        body_props[j].com.z, self.config.getup_params["randomization"].get("base_com"), return_noise=True
+                    )
+                    body_props[j].mass, self.base_mass_scaled[i, 3] = apply_randomization(
+                        body_props[j].mass, self.config.getup_params["randomization"].get("base_mass"), return_noise=True
+                    )
+                else:
+                    body_props[j].com.x = apply_randomization(body_props[j].com.x, self.config.getup_params["randomization"].get("other_com"))
+                    body_props[j].com.y = apply_randomization(body_props[j].com.y, self.config.getup_params["randomization"].get("other_com"))
+                    body_props[j].com.z = apply_randomization(body_props[j].com.z, self.config.getup_params["randomization"].get("other_com"))
+                    body_props[j].mass = apply_randomization(body_props[j].mass, self.config.getup_params["randomization"].get("other_mass"))
+                body_props[j].invMass = 1.0 / body_props[j].mass
+            self.simulator._gym.set_actor_rigid_body_properties(env_handle, humanoid_handle, body_props, recomputeInertia=True)
+
+    def _process_rigid_body_shape_properties(self):
+        # this is specific to IsaacGym simulator
+        rbs_list = self.simulator._gym.get_asset_rigid_body_shape_indices(self.simulator._humanoid_asset)
+        self.contact_shape_indices = []
+        for i in range(len(self.contact_body_names)):
+            indices = self.simulator._gym.find_asset_rigid_body_index(self.simulator._humanoid_asset, self.contact_body_names[i])
+            self.contact_shape_indices += list(range(rbs_list[indices].start, rbs_list[indices].start + rbs_list[indices].count))
+
+        for env_handle, humanoid_handle in zip(
+            self.simulator._envs, self.simulator._humanoid_handles):
+            shape_props = self.simulator._gym.get_actor_rigid_shape_properties(env_handle, humanoid_handle)
+            
+            for i in self.contact_shape_indices:
+                shape_props[i].friction = apply_randomization(
+                    shape_props[i].friction, self.config.getup_params["randomization"].get("friction")
+                )
+                shape_props[i].restitution = apply_randomization(
+                    shape_props[i].restitution, self.config.getup_params["randomization"].get("restitution")
+                )
+                shape_props[i].compliance = apply_randomization(
+                    shape_props[i].compliance, self.config.getup_params["randomization"].get("compliance")
+                )
+            self.simulator._gym.set_actor_rigid_shape_properties(env_handle, humanoid_handle, shape_props)
+
+    def _process_dof_properties(self):
+        self.simulator._common_p_gains = apply_randomization(
+            self.simulator._common_p_gains[None, :].expand(self.num_envs, -1),
+            self.config.getup_params["randomization"].get("p_gains"),
+            return_noise=True
+        )
+        self.simulator._common_d_gains = apply_randomization(
+            self.simulator._common_d_gains[None, :].expand(self.num_envs, -1),
+            self.config.getup_params["randomization"].get("d_gains"),
+            return_noise=True
+        )
+        # ZIFAN: ignoring dof friction randomization for now
 
     def reset_default(self, env_ids):
         # Adjust root position
@@ -165,10 +237,10 @@ class Getup(BaseEnv):
             root_states.root_rot, self.gravity_vec[env_ids], w_last=True)
 
         self.real_self_obs[env_ids, :] = torch.cat([
-            projected_gravity,
-            root_states.root_ang_vel,
-            dof_states.dof_pos,
-            dof_states.dof_vel * 0.1,
+            apply_randomization(projected_gravity, self.config.getup_params["noise"].get("gravity")),
+            apply_randomization(root_states.root_ang_vel, self.config.getup_params["noise"].get("ang_vel")),
+            apply_randomization(dof_states.dof_pos, self.config.getup_params["noise"].get("dof_pos")),
+            apply_randomization(dof_states.dof_vel, self.config.getup_params["noise"].get("dof_vel")) * 0.1,
             self.last_actions[env_ids]
         ], dim=-1)
 
@@ -210,4 +282,5 @@ class Getup(BaseEnv):
             self.config.getup_params.reward_scales.head_height_exp * head_height_exp + \
             self.config.getup_params.reward_scales.base_height_norm * base_height_norm + \
             self.config.getup_params.reward_scales.base_height_norm * head_height_norm + \
+            self.config.getup_params.reward_scales.power * power + \
             self.config.getup_params.reward_scales.contact_penalty * contact_penalty # - 1.e-5 * power
