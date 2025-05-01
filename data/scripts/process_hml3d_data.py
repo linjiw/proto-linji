@@ -153,47 +153,76 @@ def main(
     )
 
     for k, hml3d_idx in enumerate(tqdm(hml3d_indices)):
+        try:
+            source_path_from_csv = df["source_path"][hml3d_idx]
+            print(f"\nDEBUG: Processing HML3D Index: {hml3d_idx}, Original Source Path from CSV: {source_path_from_csv}", flush=True)
+        except KeyError:
+            print(f"DEBUG: HML3D Index {hml3d_idx} not found in index.csv. Skipping.", flush=True)
+            continue
+        except Exception as e:
+             print(f"DEBUG: Error looking up HML3D Index {hml3d_idx}: {e}. Skipping.", flush=True)
+             continue
+
         path = (
-            df["source_path"][hml3d_idx][12:]
+            source_path_from_csv[12:]
             .replace(".npz", ".npy")
             .replace("-", "_")
             .replace(" ", "_")
             .replace("(", "_")
             .replace(")", "_")
         )
+        print(f"DEBUG: Derived initial path variable: {path}", flush=True)
 
         if dataset not in path and dataset != "":
+            print(f"DEBUG: Skipping path {path} due to dataset filter '{dataset}'", flush=True)
             continue
 
         path_parts = path.split(os.path.sep)
         path_parts[0] = path_parts[0] + "-" + humanoid_type
         key = os.path.join(*(path_parts))
+        print(f"DEBUG: Constructed key for existence check: {key}", flush=True)
 
         if humanoid_type == "smplx":
             occlusion_key = ("_".join(path.split("/")))[:-4]
+            print(f"DEBUG: Original path before amass_to_amassx (occlusion key base): {occlusion_key}", flush=True)
             key = amass_to_amassx(key)
+            print(f"DEBUG: Key after amass_to_amassx: {key}", flush=True)
             path = key.replace("-smplx", "")
+            print(f"DEBUG: Path variable after amass_to_amassx and replace: {path}", flush=True)
 
             occlusion_key = amass_to_amassx(occlusion_key)
+            print(f"DEBUG: Occlusion key after amass_to_amassx: {occlusion_key}", flush=True)
         else:
             occlusion_key = "-".join(["0"] + ["_".join(path.split("/"))])[:-4]
+            print(f"DEBUG: Calculated occlusion key (non-smplx): {occlusion_key}", flush=True)
 
+        print(f"DEBUG: Checking existence for: {amass_data_path}/{key}", flush=True)
         if not os.path.exists(f"{amass_data_path}/{key}"):
+            print(f"DEBUG: FILE NOT FOUND: {amass_data_path}/{key}. Skipping.", flush=True)
             continue
+        print(f"DEBUG: File FOUND: {amass_data_path}/{key}", flush=True)
 
+        print(f"DEBUG: Checking occlusion data for key: {occlusion_key}", flush=True)
         if occlusion_key in occlusion_data:
             this_motion_occlusion = occlusion_data[occlusion_key]
+            print(f"DEBUG: Occlusion data found: {this_motion_occlusion}", flush=True)
         else:
             this_motion_occlusion = []
+            print(f"DEBUG: No occlusion data found for {occlusion_key}", flush=True)
 
+        print(f"DEBUG: Checking motion_fps_dict for path: {path}", flush=True)
         if path not in motion_fps_dict:
+            print(f"DEBUG: Path {path} not found in motion_fps_dict. Raising exception.", flush=True)
             raise Exception(f"{path} not in motion_fps_dict.")
         else:
             motion_fps = motion_fps_dict[path]
+            print(f"DEBUG: FPS found for {path}: {motion_fps}", flush=True)
 
+        print(f"DEBUG: Calling is_valid_motion for {occlusion_key}", flush=True)
         is_valid, fps_30_bound_frame = is_valid_motion(
             this_motion_occlusion, occlusion_key, options
         )
+        print(f"DEBUG: is_valid_motion result: is_valid={is_valid}, fps_30_bound_frame={fps_30_bound_frame}", flush=True)
         if not is_valid:
             continue
 

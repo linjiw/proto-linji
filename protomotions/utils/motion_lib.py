@@ -127,7 +127,7 @@ class MotionLib(DeviceDtypeModuleMixin):
             torch.tensor(key_body_ids, dtype=torch.long, device=device),
             persistent=False,
         )
-
+        print(f"motion_file init: {motion_file}")
         if str(motion_file).split(".")[-1] in ["yaml", "npy", "npz", "np"]:
             print("Loading motions from yaml/npy file")
             self._load_motions(motion_file, target_frame_rate)
@@ -152,79 +152,7 @@ class MotionLib(DeviceDtypeModuleMixin):
 
         self.motion_file = motion_file
 
-        motions = self.state.motions
-        self.register_buffer(
-            "gts",
-            torch.cat([m.global_translation for m in motions], dim=0).to(
-                dtype=torch.float32
-            ),
-            persistent=False,
-        )
-        self.register_buffer(
-            "grs",
-            torch.cat([m.global_rotation for m in motions], dim=0).to(
-                dtype=torch.float32
-            ),
-            persistent=False,
-        )
-        self.register_buffer(
-            "lrs",
-            torch.cat([m.local_rotation for m in motions], dim=0).to(
-                dtype=torch.float32
-            ),
-            persistent=False,
-        )
-        self.register_buffer(
-            "grvs",
-            torch.cat([m.global_root_velocity for m in motions], dim=0).to(
-                dtype=torch.float32
-            ),
-            persistent=False,
-        )
-        self.register_buffer(
-            "gravs",
-            torch.cat([m.global_root_angular_velocity for m in motions], dim=0).to(
-                dtype=torch.float32
-            ),
-            persistent=False,
-        )
-        self.register_buffer(
-            "gavs",
-            torch.cat([m.global_angular_velocity for m in motions], dim=0).to(
-                dtype=torch.float32
-            ),
-            persistent=False,
-        )
-        self.register_buffer(
-            "gvs",
-            torch.cat([m.global_velocity for m in motions], dim=0).to(
-                dtype=torch.float32
-            ),
-            persistent=False,
-        )
-        self.register_buffer(
-            "dvs",
-            torch.cat([m.dof_vels for m in motions], dim=0).to(
-                device=device, dtype=torch.float32
-            ),
-            persistent=False,
-        )
-
-        lengths = self.state.motion_num_frames
-        lengths_shifted = lengths.roll(1)
-        lengths_shifted[0] = 0
-        self.register_buffer(
-            "length_starts", lengths_shifted.cumsum(0), persistent=False
-        )
-
-        self.register_buffer(
-            "motion_ids",
-            torch.arange(
-                len(self.state.motions), dtype=torch.long, device=self._device
-            ),
-            persistent=False,
-        )
-
+        # Move the entire module (including self.state and all buffers) to the target device
         self.to(device)
 
     def num_motions(self):
@@ -289,15 +217,18 @@ class MotionLib(DeviceDtypeModuleMixin):
         return 0
 
     def sample_time(self, motion_ids, truncate_time=None):
+        # Revert to original logic - expect all tensors on self.device
         phase = torch.rand(motion_ids.shape, device=self.device)
 
+        # Index GPU tensor with GPU tensor
         motion_len = self.state.motion_lengths[motion_ids]
 
         if truncate_time is not None:
             assert truncate_time >= 0.0
-            motion_len -= truncate_time
-            assert torch.all(motion_len >= 0)
+            motion_len = motion_len - truncate_time # GPU op
+            assert torch.all(motion_len >= 0) # GPU op
 
+        # GPU * GPU op
         motion_time = phase * motion_len
         return motion_time
 
@@ -457,6 +388,7 @@ class MotionLib(DeviceDtypeModuleMixin):
         )
         sliced_motion = SkeletonMotion.from_skeleton_state(new_sk_state, fps=motion.fps)
 
+        print(f"DEBUG slice: motion file={motion.motion_file}, start_frame={start_frame}, end_frame={end_frame}, sliced_global_translation_shape={sliced_motion.global_translation.shape}", flush=True)
         return sliced_motion
 
     def _load_motions(self, motion_file, target_frame_rate):
@@ -466,20 +398,25 @@ class MotionLib(DeviceDtypeModuleMixin):
             model = XCLIPTextModel.from_pretrained("microsoft/xclip-base-patch32")
             tokenizer = AutoTokenizer.from_pretrained("microsoft/xclip-base-patch32")
 
-        motions = []
-        motion_lengths = []
-        motion_dt = []
-        motion_num_frames = []
-        text_embeddings = []
-        has_text_embeddings = []
-        motion_fpses = []
+        # Temporary lists for valid data
+        valid_motions = []
+        valid_motion_lengths = []
+        valid_motion_dt = []
+        valid_motion_num_frames = []
+        valid_text_embeddings = []
+        valid_has_text_embeddings = []
+        valid_motion_fpses = []
+        valid_motion_weights = []
+        valid_ref_respawn_offsets = []
+        valid_motion_files_ref = [] # Keep track of original file for debugging
+
         (
-            motion_files,
-            motion_weights,
+            motion_files, # Original list of unique files
+            all_motion_weights, # Original weights for all sub-motions
             motion_timings,
             full_motion_fpses,
             sub_motion_to_motion,
-            ref_respawn_offsets,
+            all_ref_respawn_offsets, # Original offsets for all sub-motions
             motion_labels,
         ) = self._fetch_motion_files(motion_file)
 
@@ -488,102 +425,211 @@ class MotionLib(DeviceDtypeModuleMixin):
         for f in range(num_sub_motions):
             motion_f = sub_motion_to_motion[f]
             curr_file = motion_files[motion_f]
+            print(f"DEBUG LoadMotions: Starting iteration f={f}, motion_f={motion_f}, file={curr_file}", flush=True)
+
             print(
                 "Loading {:d}/{:d} motion files: {:s}".format(
                     f + 1, num_sub_motions, curr_file
                 )
             )
 
-            curr_motion = self._load_motion_file(curr_file)
+            try:
+                curr_motion = self._load_motion_file(curr_file)
 
-            cur_fps = full_motion_fpses[motion_f]
-            if cur_fps is None:
-                cur_fps = curr_motion.fps
-                
-            if cur_fps > target_frame_rate:
-                # Not necessary, but we downsample the FPS to save memory
-                # do nothing if cur_fps <= target_frame_rate
-                curr_motion = self._fix_motion_fps(
-                    curr_motion,
-                    cur_fps,
-                    target_frame_rate,
-                    self.skeleton_tree,
-                )
+                if curr_motion is not None and hasattr(curr_motion, 'global_translation'):
+                    print(f"DEBUG LoadMotions: f={f}, Loaded full motion. Shape: {curr_motion.global_translation.shape}, FPS: {curr_motion.fps}", flush=True)
+                else:
+                     print(f"DEBUG LoadMotions: f={f}, Failed to load full motion or motion has no global_translation.", flush=True)
+                     continue
 
-            sub_motion = self._slice_motion_file(curr_motion, motion_timings[f])
-            motion_fpses.append(float(sub_motion.fps))
+                cur_fps = full_motion_fpses[motion_f]
+                if cur_fps is None:
+                    cur_fps = curr_motion.fps
 
-            if self.fix_heights:
-                sub_motion = self.fix_motion_heights(sub_motion, self.skeleton_tree)
-
-            curr_dt = 1.0 / motion_fpses[f]
-
-            num_frames = sub_motion.global_translation.shape[0]
-            curr_len = 1.0 / motion_fpses[f] * (num_frames - 1)
-
-            motion_dt.append(curr_dt)
-            motion_num_frames.append(num_frames)
-
-            curr_dof_vels = self._compute_motion_dof_vels(sub_motion)
-            sub_motion.dof_vels = curr_dof_vels
-
-            motions.append(sub_motion)
-            motion_lengths.append(curr_len)
-
-            if self.create_text_embeddings and motion_labels[f][0] != "":
-                with torch.inference_mode():
-                    inputs = tokenizer(
-                        motion_labels[f],
-                        padding=True,
-                        truncation=True,
-                        return_tensors="pt",
+                motion_fixed = False
+                if cur_fps > target_frame_rate:
+                    print(f"DEBUG LoadMotions: f={f}, Before fixing FPS. Original FPS: {cur_fps}", flush=True)
+                    curr_motion = self._fix_motion_fps(
+                        curr_motion,
+                        cur_fps,
+                        target_frame_rate,
+                        self.skeleton_tree,
                     )
-                    outputs = model(**inputs)
-                    pooled_output = outputs.pooler_output  # pooled (EOS token) states
-                    text_embeddings.append(pooled_output)  # should be [3, 512]
-                    has_text_embeddings.append(True)
-            else:
-                text_embeddings.append(
-                    torch.zeros((3, 512), dtype=torch.float32)
-                )  # just hold something temporary
-                has_text_embeddings.append(False)
+                    motion_fixed = True
+                    if curr_motion is not None and hasattr(curr_motion, 'global_translation'):
+                        print(f"DEBUG LoadMotions: f={f}, After fixing FPS. New Shape: {curr_motion.global_translation.shape}, New FPS: {curr_motion.fps}", flush=True)
+                    else:
+                        print(f"DEBUG LoadMotions: f={f}, Failed to fix FPS or motion has no global_translation.", flush=True)
+                        continue
 
-        motion_lengths = torch.tensor(
-            motion_lengths, device=self._device, dtype=torch.float32
+                print(f"DEBUG LoadMotions: f={f}, Before slicing. Timings: {motion_timings[f]}. Motion fixed: {motion_fixed}", flush=True)
+
+                sub_motion = self._slice_motion_file(curr_motion, motion_timings[f])
+
+                if sub_motion is None or not hasattr(sub_motion, 'global_translation') or sub_motion.global_translation.numel() == 0:
+                    print(f"DEBUG LoadMotions WARNING: f={f}, Slicing resulted in an empty or invalid motion. Skipping this sub-motion.", flush=True)
+                    continue
+
+                print(f"DEBUG LoadMotions: f={f}, After slicing. Sliced Shape: {sub_motion.global_translation.shape}", flush=True)
+
+                valid_motion_fpses.append(float(sub_motion.fps))
+
+                print(f"DEBUG LoadMotions: f={f}, Before fixing height.", flush=True)
+
+                if self.fix_heights:
+                    sub_motion = self.fix_motion_heights(sub_motion, self.skeleton_tree)
+
+                if sub_motion is not None and hasattr(sub_motion, 'global_translation'):
+                     print(f"DEBUG LoadMotions: f={f}, After fixing height. Final Shape: {sub_motion.global_translation.shape}", flush=True)
+                     if sub_motion.global_translation.numel() == 0:
+                         print(f"DEBUG LoadMotions ALERT: f={f}, Final global_translation is EMPTY after height fix!", flush=True)
+
+                else:
+                     print(f"DEBUG LoadMotions: f={f}, Failed after fixing height or final motion has no global_translation.", flush=True)
+                     continue
+
+                print(f"DEBUG LoadMotions: f={f}, Before computing DOF vels.", flush=True)
+
+                curr_dof_vels = self._compute_motion_dof_vels(sub_motion)
+                sub_motion.dof_vels = curr_dof_vels
+
+                print(f"DEBUG LoadMotions: f={f}, After computing DOF vels.", flush=True)
+
+                curr_dt = 1.0 / valid_motion_fpses[-1]
+                num_frames = sub_motion.global_translation.shape[0]
+                curr_len = curr_dt * (num_frames - 1)
+
+                valid_motions.append(sub_motion)
+                valid_motion_lengths.append(curr_len)
+                valid_motion_dt.append(curr_dt)
+                valid_motion_num_frames.append(num_frames)
+                valid_motion_weights.append(all_motion_weights[f])
+                valid_ref_respawn_offsets.append(all_ref_respawn_offsets[f])
+                valid_motion_files_ref.append(curr_file)
+
+                if self.create_text_embeddings and motion_labels[f][0] != "":
+                    with torch.inference_mode():
+                        inputs = tokenizer(
+                            motion_labels[f],
+                            padding=True,
+                            truncation=True,
+                            return_tensors="pt",
+                        )
+                        outputs = model(**inputs)
+                        pooled_output = outputs.pooler_output  # pooled (EOS token) states
+                        valid_text_embeddings.append(pooled_output)
+                        valid_has_text_embeddings.append(True)
+                else:
+                    valid_text_embeddings.append(torch.zeros((3, 512), dtype=torch.float32))
+                    valid_has_text_embeddings.append(False)
+            except Exception as e:
+                print(f"DEBUG LoadMotions: f={f} EXCEPTION during processing: {e}", flush=True)
+                continue
+
+        # --- Convert VALID lists to tensors ---
+        if not valid_motions: # Check if any motions were loaded
+             raise RuntimeError("MotionLib: No valid motions were loaded after processing. Check motion files and slicing parameters.")
+
+        motion_lengths_tensor = torch.tensor(
+            valid_motion_lengths, device=self._device, dtype=torch.float32
+        )
+        motion_weights_tensor = torch.tensor(
+            valid_motion_weights, dtype=torch.float32, device=self._device
+        )
+        if motion_weights_tensor.numel() > 0:
+            motion_weights_tensor /= motion_weights_tensor.sum()
+
+        motion_fps_tensor = torch.tensor(
+            valid_motion_fpses, device=self._device, dtype=torch.float32
+        )
+        motion_dt_tensor = torch.tensor(
+             valid_motion_dt, device=self._device, dtype=torch.float32
+        )
+        motion_num_frames_tensor = torch.tensor(
+            valid_motion_num_frames, device=self._device, dtype=torch.long # Use long for counts
+        )
+        ref_respawn_offsets_tensor = torch.tensor(
+            valid_ref_respawn_offsets, dtype=torch.float32, device=self._device
+        )
+        text_embeddings_tensor = torch.stack(valid_text_embeddings).detach().to(device=self._device)
+        has_text_embeddings_tensor = torch.tensor(
+            valid_has_text_embeddings, dtype=torch.bool, device=self._device
         )
 
-        motion_weights = torch.tensor(
-            motion_weights, dtype=torch.float32, device=self._device
-        )
-        motion_weights /= motion_weights.sum()
-
-        ref_respawn_offsets = torch.tensor(
-            ref_respawn_offsets, dtype=torch.float32, device=self._device
-        )
-
-        motion_fpses = torch.tensor(
-            motion_fpses, device=self._device, dtype=torch.float32
-        )
-        motion_dt = torch.tensor(motion_dt, device=self._device, dtype=torch.float32)
-        motion_num_frames = torch.tensor(motion_num_frames, device=self._device)
-
-        text_embeddings = torch.stack(text_embeddings).detach().to(device=self._device)
-        has_text_embeddings = torch.tensor(
-            has_text_embeddings, dtype=torch.bool, device=self._device
-        )
-
+        # --- Store state with correctly sized tensors ---
         self.state = LoadedMotions(
-            motions=tuple(motions),
-            motion_lengths=motion_lengths,
-            motion_weights=motion_weights,
-            motion_fps=motion_fpses,
-            motion_dt=motion_dt,
-            motion_num_frames=motion_num_frames,
-            motion_files=tuple(motion_files),
-            ref_respawn_offsets=ref_respawn_offsets,
-            text_embeddings=text_embeddings,
-            has_text_embeddings=has_text_embeddings,
+            motions=tuple(valid_motions), # Use the tuple of valid motions
+            motion_lengths=motion_lengths_tensor,
+            motion_weights=motion_weights_tensor,
+            motion_fps=motion_fps_tensor,
+            motion_dt=motion_dt_tensor,
+            motion_num_frames=motion_num_frames_tensor,
+            # Use the original full list of files for reference? Or filter? Let's filter.
+            motion_files=tuple(valid_motion_files_ref), # Store files corresponding to valid motions
+            ref_respawn_offsets=ref_respawn_offsets_tensor,
+            text_embeddings=text_embeddings_tensor,
+            has_text_embeddings=has_text_embeddings_tensor,
         )
+
+        # --- Create concatenated tensors from the VALID motions ---
+        # NOTE: This part moves from __init__ to the end of _load_motions
+        final_motions = self.state.motions # Get the filtered tuple
+        self.register_buffer(
+            "gts",
+            torch.cat([m.global_translation for m in final_motions], dim=0).to(dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "grs",
+            torch.cat([m.global_rotation for m in final_motions], dim=0).to(dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "lrs",
+            torch.cat([m.local_rotation for m in final_motions], dim=0).to(dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "grvs",
+            torch.cat([m.global_root_velocity for m in final_motions], dim=0).to(dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "gravs",
+            torch.cat([m.global_root_angular_velocity for m in final_motions], dim=0).to(dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "gavs",
+            torch.cat([m.global_angular_velocity for m in final_motions], dim=0).to(dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "gvs",
+            torch.cat([m.global_velocity for m in final_motions], dim=0).to(dtype=torch.float32),
+            persistent=False,
+        )
+        # Crucially, ensure dvs are correctly calculated and assigned before this cat
+        self.register_buffer(
+            "dvs",
+            torch.cat([m.dof_vels for m in final_motions], dim=0).to(device=self._device, dtype=torch.float32),
+            persistent=False,
+        )
+
+        # Recalculate length_starts based on the filtered motion_num_frames_tensor
+        lengths = self.state.motion_num_frames # Use the filtered tensor
+        lengths_shifted = lengths.roll(1)
+        lengths_shifted[0] = 0
+        self.register_buffer(
+            "length_starts", lengths_shifted.cumsum(0), persistent=False
+        )
+
+        self.register_buffer(
+            "motion_ids",
+            torch.arange(len(self.state.motions), dtype=torch.long, device=self._device), # Use length of filtered motions
+            persistent=False,
+        )
+        # --- End of moved section ---
 
         num_motions = self.num_motions()
         total_len = self.get_total_length()
@@ -605,6 +651,7 @@ class MotionLib(DeviceDtypeModuleMixin):
             motion_timings = []
             motion_fpses = []
             motion_labels = []
+            print(f"Loading motion file: {motion_file}")
             with open(os.path.join(os.getcwd(), motion_file), "r") as f:
                 motion_config = EasyDict(yaml.load(f, Loader=yaml.SafeLoader))
 

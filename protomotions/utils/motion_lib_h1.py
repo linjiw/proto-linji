@@ -54,7 +54,8 @@ class H1_MotionLib(MotionLib):
     ):
 
         super().__init__(
-            motion_file=motion_file,
+            motion_file="/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml",
+            # motion_file="/home/linji/nfs/ProtoMotions-T1/data/yaml_files/hml3d_h1_3.yaml",
             robot_config=robot_config,
             key_body_ids=key_body_ids,
             device=device,

@@ -115,14 +115,21 @@ def main(
                     )
                     if "mocap_framerate" in motion_data:
                         framerate = motion_data["mocap_framerate"]
+                    elif "mocap_frame_rate" in motion_data:
+                        framerate = motion_data["mocap_frame_rate"]
                     else:
-                        raise Exception(f"{file_rename} has no framerate")
+                        raise Exception(f"{file_rename} has no framerate key ('mocap_framerate' or 'mocap_frame_rate')")
 
                 motion_fps_dict[file_rename] = int(framerate)
 
     if output_path is None:
         output_path = Path.cwd()
-    with open(output_path / f"motion_fps_{humanoid_type}.yaml", "w") as f:
+    elif output_path.is_dir():
+        output_path = output_path / f"motion_fps_{humanoid_type}.yaml"
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_path, "w") as f:
         yaml.dump(motion_fps_dict, f)
 
 

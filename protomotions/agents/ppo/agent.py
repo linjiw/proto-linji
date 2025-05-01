@@ -134,10 +134,10 @@ class PPO:
             self.load_parameters(state_dict)
             
             env_checkpoint = checkpoint.resolve().parent / f"env_{self.fabric.global_rank}.ckpt"
-            if env_checkpoint.exists():
-                print(f"Loading env checkpoint: {env_checkpoint}")
-                env_state_dict = torch.load(env_checkpoint, map_location=self.device)
-                self.env.load_state_dict(env_state_dict)
+            # if env_checkpoint.exists():
+            #     print(f"Loading env checkpoint: {env_checkpoint}")
+            #     env_state_dict = torch.load(env_checkpoint, map_location=self.device)
+            #     self.env.load_state_dict(env_state_dict)
 
     def load_parameters(self, state_dict):
         self.current_epoch = state_dict["epoch"]

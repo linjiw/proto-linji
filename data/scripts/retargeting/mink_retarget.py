@@ -484,6 +484,14 @@ def retarget_motion(motion: SkeletonMotion, robot_type: str, render: bool = Fals
     fps = motion.fps
 
     smplx_mujoco_joint_names = SMPLH_MUJOCO_NAMES
+
+    # <<< Add prints here >>>
+    print(f"[DEBUG retarget] Input motion frames: {global_translations.shape[0]}, joints: {global_translations.shape[1]}")
+    print(f"[DEBUG retarget] global_translations shape: {global_translations.shape}")
+    print(f"[DEBUG retarget] pose_quat_global shape: {pose_quat_global.shape}")
+    print(f"[DEBUG retarget] Using smplx_mujoco_joint_names (length {len(smplx_mujoco_joint_names)}) for indexing.")
+    # <<< End prints >>>
+
     model = construct_model(robot_type, smplx_mujoco_joint_names)
     configuration = mink.Configuration(model)
 
@@ -569,9 +577,15 @@ def retarget_motion(motion: SkeletonMotion, robot_type: str, render: bool = Fals
                 for i, (joint_name, retarget_info) in enumerate(
                     _KEYPOINT_TO_JOINT_MAP[robot_type].items()
                 ):
-                    # import ipdb; ipdb.set_trace()
+                    # Finds index in SMPLH_MUJOCO_NAMES (52 joints)
                     body_idx = smplx_mujoco_joint_names.index(joint_name)
-                    target_pos = global_translations[max(0, t), body_idx, :].copy()
+
+                    # <<< Add print here >>>
+                    # print(f"[DEBUG retarget loop] t={max(0, t)}, joint_name='{joint_name}', body_idx={body_idx}, global_translations.shape[1]={global_translations.shape[1]}")
+                    # <<< End print >>>
+
+                    # Accesses global_translations using body_idx
+                    target_pos = global_translations[max(0, t), body_idx, :].copy() # <-- Likely source of error
 
                     if robot_type in _RESCALE_FACTOR:
                         target_pos *= _RESCALE_FACTOR[robot_type]

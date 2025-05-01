@@ -12,3 +12,20 @@ results/*
 data/amass
 data/smpl
 debug
+*.npz
+*.pth
+*.pt
+*.npy
+# *.png
+# *.jpg
+# *.jpeg
+# *.gif
+
+*.zip
+data/hml3d/*
+motion_data_x/*
+results/*
+*.txt
+*.pkl
+*.ckpt
+*.bz2
