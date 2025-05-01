@@ -17,3 +17,18 @@ agent:
     training_early_termination:
       early_terminate_cart_err: null
       early_terminate_success_rate: null
+
+    # ===> ADD PLR CONFIG HERE <===
+    plr:
+      enabled: true            # Master switch
+      strategy: "value_l1"     # Score calculation: 'value_l1', 'gae_abs'
+      ema_alpha: 0.1           # EMA factor for score updates (1.0 = replace)
+
+      # Score-based prioritization (P_S)
+      score_transform: "rank"  # 'rank', 'power', 'softmax'
+      temperature: 0.1         # Low temp = sharp prioritization
+
+      # Staleness-based prioritization (P_C)
+      staleness_coef: 0.3      # Weight for staleness (0 = only score)
+      staleness_transform: "rank" # 'rank', 'power', 'softmax'
+      staleness_temperature: 1.0 # Usually less sharp

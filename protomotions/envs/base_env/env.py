@@ -317,8 +317,14 @@ class BaseEnv:
 
         self.log_dict["terminate_frac"] = self.terminate_buf.float().mean()
 
-        self.extras["terminate"] = self.terminate_buf
-        self.extras["to_log"] = self.log_dict
+        self.extras["terminate"] = self.terminate_buf.clone()
+        self.extras["to_log"] = self.log_dict.copy()
+
+        if hasattr(self, 'motion_manager') and self.motion_manager is not None:
+            self.extras['motion_ids'] = self.motion_manager.motion_ids.clone()
+        else:
+            if 'motion_ids' in self.extras:
+                del self.extras['motion_ids']
 
     def user_reset(self):
         self.progress_buf[:] = 1e6

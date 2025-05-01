@@ -78,3 +78,20 @@ HYDRA_FULL_ERROR=1 python protomotions/train_agent.py +exp=full_body_tracker/tra
 python protomotions/train_agent.py  +exp=full_body_tracker/transformer_flat_terrain +robot=t1 +simulator=isaacgym +motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml +experiment_name=full_body_tracker_t1_cmudata +opt=wandb
 
 HYDRA_FULL_ERROR=1 python protomotions/eval_agent.py +robot=t1 +simulator=isaacgym +checkpoint=results/t1_full_body_tracker_amp/last.ckpt +motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml ++num_envs=10
+
+python protomotions/train_agent.py  +exp=full_body_tracker/transformer_flat_terrain +robot=t1 +simulator=isaacgym +motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml +experiment_name=full_body_tracker_t1_cmudata_02 +opt=wandb ++num_envs=4096
+
+export LD_LIBRARY_PATH=~/miniconda3/envs/protomotions/lib/:$LD_LIBRARY_PATH
+
+
+python protomotions/train_agent.py \
+    +exp=full_body_tracker/transformer_flat_terrain \
+    +robot=t1 \
+    +simulator=isaacgym \
+    motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml \
+    +experiment_name=t1_full_body_tracker_plr_v1 \
+    +opt=wandb
+    # Ensure the loaded agent config has plr.enabled=true
+
+
+python protomotions/train_agent.py     +exp=full_body_tracker/transformer_flat_terrain     +robot=t1     +simulator=isaacgym     motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml     +experiment_name=t1_full_body_tracker_plr_v1     +opt=wandb

@@ -46,6 +46,16 @@ agent:
   _target_: protomotions.agents.mimic.agent.Mimic
   _recursive_: false
   config:
+
+    plr:
+      enabled: true
+      strategy: "value_l1"
+      ema_alpha: 0.1
+      score_transform: "rank"
+      temperature: 0.1
+      staleness_coef: 0.3
+      staleness_transform: "rank"
+      staleness_temperature: 1.0
     model:
       _target_: protomotions.agents.ppo.model.PPOModel
       _recursive_: false
@@ -243,6 +253,7 @@ agent:
           obs_key: terrain
           normalize_obs: true
           norm_clamp_value: 5
+
 env:
   _target_: protomotions.envs.mimic.env.Mimic
   _recursive_: false
@@ -324,7 +335,7 @@ env:
         joint_masking:
           masked_mimic_time_gap_probability: 0.1
           time_gap_mask_min_steps: 1
-          time_gap_mask_max_steps: ${eval:${env.config.mimic_target_pose.num_future_steps}+1}
+          time_gap_mask_max_steps: ${eval:${.time_gap_mask_max_steps}*4}
           with_conditioning_time_gap_mask_max_steps: ${eval:${.time_gap_mask_max_steps}*4}
           with_conditioning_max_gap_probability: 0.2
           masked_mimic_repeat_mask_probability: 0.98

@@ -34,3 +34,21 @@ agent:
     manual_save_every: 10
     max_epochs: ${eval:${training_max_steps}//${ngpu}//${num_envs}//${.num_steps}}
     extra_inputs: null
+
+# Add a new section for PLR
+plr:
+  enabled: true            # Master switch
+  strategy: "value_l1"     # Score calculation: 'value_l1', 'gae_abs' (more can be added)
+  ema_alpha: 0.1           # EMA factor for score updates (1.0 = replace, smaller = smooth)
+
+  # Score-based prioritization (P_S)
+  score_transform: "rank"  # 'rank', 'power', 'softmax'
+  temperature: 0.1         # Low temp = sharp prioritization, High temp = uniform
+
+  # Staleness-based prioritization (P_C)
+  staleness_coef: 0.3      # Weight for staleness (0 = only score, 1 = only staleness)
+  staleness_transform: "rank" # 'rank', 'power', 'softmax'
+  staleness_temperature: 1.0 # Usually less sharp than score temp
+
+  # Update frequency (optional, e.g., update weights every N agent steps)
+  # update_freq: 1 # Update every training step

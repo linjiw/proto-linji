@@ -29,6 +29,8 @@
 import torch
 import os
 import logging
+import numpy as np
+from omegaconf import DictConfig
 
 from torch import Tensor
 
@@ -51,6 +53,27 @@ from protomotions.envs.base_env.env import BaseEnv
 from protomotions.utils.running_mean_std import RunningMeanStd
 from rich.progress import track
 from protomotions.agents.ppo.utils import discount_values, bounds_loss
+
+try:
+    from torch_scatter import scatter_mean, scatter_add
+except ImportError:
+    print("torch_scatter not found. PLR score aggregation will be less efficient.")
+    # Define fallback functions or raise an error if scatter ops are crucial
+    def scatter_mean(src, index, dim_size, dim=0):
+        # Basic fallback - might be slow
+        out = torch.zeros(dim_size, *src.shape[1:], device=src.device, dtype=src.dtype)
+        counts = torch.zeros(dim_size, device=src.device, dtype=torch.long)
+        scatter_add(src, index, dim=dim, out=out)
+        scatter_add(torch.ones_like(src), index, dim=dim, out=counts.unsqueeze(-1).expand_as(out)) # Hacky way to count
+        counts = torch.clamp(counts, min=1)
+        return out / counts
+    def scatter_add(src, index, dim_size, dim=0, out=None):
+         # Basic fallback
+        if out is None:
+            out = torch.zeros(dim_size, *src.shape[1:], device=src.device, dtype=src.dtype)
+        for i in range(src.shape[dim]):
+            out[index[i]] += src[i]
+        return out
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +126,33 @@ class PPO:
         self.best_evaluated_score = None
 
         self.force_full_restart = False
+
+        # --- PLR Initialization ---
+        self.plr_config = config.get('plr', None)
+        self.plr_enabled = self.plr_config is not None and self.plr_config.get('enabled', False)
+        print(f'config: {config}')
+        print(f"PLR enabled: {self.plr_enabled}")
+        if self.plr_enabled:
+            print("PLR Motion Sampling Enabled")
+            if not hasattr(self.env, 'motion_lib') or not hasattr(self.env, 'motion_manager'):
+                 raise AttributeError("Environment must have 'motion_lib' and 'motion_manager' for PLR.")
+
+            self.num_motions = self.env.motion_lib.num_motions()
+            if self.num_motions <= 0:
+                raise ValueError("MotionLib reported zero motions. Cannot enable PLR.")
+
+            # Initialize PLR state tensors
+            self.motion_scores = torch.zeros(self.num_motions, dtype=torch.float32, device=self.device)
+            self.motion_staleness = torch.zeros(self.num_motions, dtype=torch.float32, device=self.device) # Use float for potential power transform
+            # Initialize scores pessimistically (e.g., high value) to encourage exploration initially? Or zero? Let's start with zero.
+
+            # Store last sampled IDs for staleness update
+            self._last_sampled_motion_ids_in_batch = None
+
+            # Validate PLR config
+            if self.plr_config.strategy not in ['value_l1', 'gae_abs']:
+                raise ValueError(f"Unsupported PLR strategy: {self.plr_config.strategy}")
+            # Add more validation for transform types, etc.
 
     @property
     def should_stop(self):
@@ -276,6 +326,17 @@ class PPO:
                 dtype = env_tensor.dtype
                 self.experience_buffer.register_key(key, shape=shape[1:], dtype=dtype)
 
+        # *** PLR: Register motion_ids key if PLR is enabled ***
+        if self.plr_enabled:
+            # Assuming motion_id is a single long integer per environment
+            self.experience_buffer.register_key("motion_ids", shape=(), dtype=torch.long)
+            # Point self.storage to self.experience_buffer for PLR methods
+            self.storage = self.experience_buffer
+            log.info("Registered 'motion_ids' key in ExperienceBuffer for PLR.")
+        else:
+            # Set storage to None if PLR is not enabled, PLR methods will check
+            self.storage = None
+
         # Force reset on fit start
         done_indices = None
         if self.fit_start_time is None:
@@ -318,6 +379,16 @@ class PPO:
                     # Step the environment
                     next_obs, rewards, dones, terminated, extras = self.env_step(action)
 
+                    # *** PLR: Store motion_ids ***
+                    if self.plr_enabled:
+                        if 'motion_ids' not in extras:
+                            raise KeyError("Environment 'extras' dictionary must contain 'motion_ids' when PLR is enabled.")
+                        # Ensure motion_ids has the correct shape [num_envs]
+                        motion_ids_for_step = extras['motion_ids'].to(self.device)
+                        if motion_ids_for_step.ndim > 1:
+                             motion_ids_for_step = motion_ids_for_step.squeeze() # Remove trailing dims if needed
+                        self.experience_buffer.update_data("motion_ids", step, motion_ids_for_step)
+
                     all_done_indices = dones.nonzero(as_tuple=False)
                     done_indices = all_done_indices.squeeze(-1)
 
@@ -359,15 +430,32 @@ class PPO:
                     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
                 self.experience_buffer.batch_update_data("advantages", advantages)
 
+            # --- Model Optimization ---
+            # This call updates the actor and critic networks
             training_log_dict = self.optimize_model()
             training_log_dict["epoch"] = self.current_epoch
+
+            # --- PLR: Update State and Sampling Weights ---
+            if self.plr_enabled:
+                # Calculates scores from the *just processed* batch (via self.storage)
+                # and updates EMA score state. Updates staleness based on the
+                # sampled IDs from that batch.
+                self._update_plr_state()
+                # Calculates new weights based on updated scores/staleness
+                # and pushes them to MotionManager for the *next* data collection phase.
+                self._update_motion_sampling_weights()
+                log.info(f"PLR state and weights updated for epoch {self.current_epoch}")
+
+            self.fabric.call("after_train", self) # Callbacks after training step
+
+            # --- Epoch End Tasks ---
             self.current_epoch += 1
-            self.fabric.call("after_train", self)
 
             # Save model checkpoint at specified intervals before evaluation.
             if self.current_epoch % self.config.manual_save_every == 0:
                 self.save()
 
+            # Evaluation
             if (
                 self.config.eval_metrics_every is not None
                 and self.current_epoch > 0
@@ -384,13 +472,16 @@ class PPO:
                         self.save(new_high_score=True)
                 training_log_dict.update(eval_log_dict)
 
+            # Logging
             self.post_epoch_logging(training_log_dict)
             self.env.on_epoch_end(self.current_epoch)
 
+            # Check for termination signal
             if self.should_stop:
                 self.save()
                 return
 
+        # --- End of Training Loop ---
         self.time_report.report()
         self.save()
         self.fabric.call("on_fit_end", self)
@@ -659,7 +750,27 @@ class PPO:
         if len(env_log_dict) > 0:
             log_dict.update(env_log_dict)
         log_dict.update(training_log_dict)
-        self.fabric.log_dict(log_dict)
+
+        # --- PLR Logging ---
+        if self.plr_enabled:
+            log_dict['plr/mean_score'] = self.motion_scores.mean().item()
+            log_dict['plr/max_score'] = self.motion_scores.max().item()
+            log_dict['plr/min_score'] = self.motion_scores.min().item()
+            log_dict['plr/mean_staleness'] = self.motion_staleness.mean().item()
+            log_dict['plr/max_staleness'] = self.motion_staleness.max().item()
+
+            # Log sampling distribution entropy
+            current_weights = self.env.motion_manager.motion_weights # Get current weights
+            entropy = -(current_weights * torch.log(current_weights + 1e-9)).sum()
+            log_dict['plr/sampling_entropy'] = entropy.item()
+
+            # --- Add Top K Weights to WandB Log ---
+            # Get top k weights again (or store from _update_motion_sampling_weights if needed)
+            top_k_log_data = self._log_top_k_weights(current_weights, k=5) # Recalculate for logging
+            log_dict.update(top_k_log_data) # Add top_k data to the main log dict
+
+        # Log combined dictionary
+        self.fabric.log_dict(log_dict, step=self.current_epoch) # Ensure logging uses the correct step
 
     # -----------------------------
     # Helper Functions
@@ -699,3 +810,217 @@ class PPO:
 
         dataset = DictDataset(self.config.batch_size, dataset, shuffle=True)
         return dataset
+
+    # --- PLR Helper Methods ---
+
+    def _score_transform(self, scores, transform_type, temperature, eps=1e-8):
+        """Applies score transformation and temperature."""
+        if transform_type == "rank":
+            # Higher score = lower rank = higher probability
+            sorted_indices = torch.argsort(scores, descending=True)
+            ranks = torch.zeros_like(scores, dtype=torch.float32)
+            ranks[sorted_indices] = torch.arange(len(scores), device=self.device, dtype=torch.float32)
+            transformed_scores = 1.0 / (ranks + 1.0 + eps) # +1 for 1-based rank
+        elif transform_type == "power":
+            # Ensure scores are non-negative if using power
+            transformed_scores = torch.clamp(scores, min=0) + eps
+        elif transform_type == "softmax":
+            # Softmax handles temperature directly
+            if temperature <= 0: temperature = eps
+            return torch.softmax(scores / temperature, dim=0)
+        else:
+            raise ValueError(f"Unknown score transform: {transform_type}")
+
+        # Apply temperature for rank and power
+        if temperature <= 0: temperature = eps
+        transformed_scores = transformed_scores**(1.0 / temperature)
+        return transformed_scores
+
+    def _calculate_plr_weights(self):
+        """Calculates the final sampling weights based on scores and staleness."""
+        if self.num_motions == 0: return None # Should not happen if init checks pass
+
+        # 1. Calculate Score-based Weights (P_S)
+        ps_weights = self._score_transform(
+            self.motion_scores,
+            self.plr_config.score_transform,
+            self.plr_config.temperature
+        )
+        ps_sum = ps_weights.sum()
+        if ps_sum > 1e-8:
+            ps_weights /= ps_sum
+        else:
+            ps_weights = torch.ones_like(ps_weights) / self.num_motions # Fallback to uniform
+
+        # 2. Calculate Staleness-based Weights (P_C)
+        pc_weights = torch.zeros_like(ps_weights)
+        if self.plr_config.staleness_coef > 0:
+            pc_weights = self._score_transform(
+                self.motion_staleness,
+                self.plr_config.staleness_transform,
+                self.plr_config.staleness_temperature
+            )
+            pc_sum = pc_weights.sum()
+            if pc_sum > 1e-8:
+                pc_weights /= pc_sum
+            else:
+                 # If staleness sum is zero (e.g., first step), fallback to uniform staleness
+                pc_weights = torch.ones_like(pc_weights) / self.num_motions
+
+        # 3. Mix
+        mixed_weights = (1.0 - self.plr_config.staleness_coef) * ps_weights \
+                      + self.plr_config.staleness_coef * pc_weights
+
+        # 4. Final Normalization (handle potential floating point inaccuracies)
+        mixed_weights = torch.clamp(mixed_weights, min=0) # Ensure non-negative
+        final_sum = mixed_weights.sum()
+        if final_sum > 1e-8:
+            normalized_weights = mixed_weights / final_sum
+        else:
+            normalized_weights = torch.ones_like(mixed_weights) / self.num_motions # Fallback
+
+        # Ensure no NaNs
+        normalized_weights = torch.nan_to_num(normalized_weights, nan=0.0)
+        renorm_sum = normalized_weights.sum()
+        if renorm_sum > 1e-8:
+             normalized_weights = normalized_weights / renorm_sum
+        else:
+             normalized_weights = torch.ones_like(normalized_weights) / self.num_motions
+
+
+        return normalized_weights
+
+    def _update_plr_state(self):
+        """Updates scores and staleness based on the last completed rollout."""
+        if not self.plr_enabled or self.storage is None:
+            return
+
+        # --- Update Scores ---
+        with torch.no_grad():
+            # Ensure returns and advantages are computed
+            # Check if required attributes exist on the storage object
+            required_attrs = ['advantages', 'returns', 'values', 'rewards', 'motion_ids']
+            for attr in required_attrs:
+                 if not hasattr(self.storage, attr) or getattr(self.storage, attr) is None:
+                      log.warning(f"Attribute '{attr}' not found or is None in storage. Cannot update PLR scores.")
+                      return
+
+            # Get relevant data - reshape to (num_steps * num_envs, ...)
+            num_steps, num_envs = self.storage.rewards.shape[:2]
+            # Check if buffer is filled enough (at least num_steps)
+            if num_steps < self.num_steps:
+                 log.warning(f"Storage has only {num_steps} steps, expected {self.num_steps}. Skipping PLR update this time.")
+                 return
+
+            values = self.storage.values[:num_steps].reshape(-1)
+            returns = self.storage.returns[:num_steps].reshape(-1)
+            advantages = self.storage.advantages[:num_steps].reshape(-1)
+
+            # Get motion IDs - Assuming storage has 'motion_ids' [steps, envs, 1 or 0 dim]
+            # Flatten motion IDs to match other tensors
+            motion_ids_flat = self.storage.motion_ids[:num_steps].reshape(-1)
+
+
+            # Calculate scores per step
+            if self.plr_config.strategy == 'value_l1':
+                step_scores = (returns - values).abs()
+            elif self.plr_config.strategy == 'gae_abs':
+                step_scores = advantages.abs()
+            else: # Should have been caught in init
+                 log.error(f"Invalid PLR strategy: {self.plr_config.strategy}")
+                 return # Return early if strategy is invalid
+
+            # Aggregate scores per motion ID using scatter_mean
+            # Need unique motion IDs present and their inverse mapping if not using scatter
+            # scatter_mean is much cleaner:
+            try:
+                # Ensure indices are within bounds
+                valid_indices = (motion_ids_flat >= 0) & (motion_ids_flat < self.num_motions)
+                if not valid_indices.all():
+                    log.error(f"Invalid motion IDs detected in PLR update: min={motion_ids_flat.min()}, max={motion_ids_flat.max()}, num_motions={self.num_motions}")
+                    # Optionally filter out invalid ones, or just return
+                    # motion_ids_flat = motion_ids_flat[valid_indices]
+                    # step_scores = step_scores[valid_indices]
+                    return # Safer to just skip the update if indices are bad
+
+                batch_motion_scores = scatter_mean(step_scores[valid_indices], motion_ids_flat[valid_indices], dim_size=self.num_motions)
+                # Handle motions not present in batch (scatter_mean gives 0, which is fine for EMA)
+            except NameError:
+                 # Fallback without torch_scatter (less efficient)
+                 log.warning("Using fallback for scatter_mean in PLR (torch_scatter not found).")
+                 batch_motion_scores = torch.zeros_like(self.motion_scores)
+                 unique_ids, inverse_indices = torch.unique(motion_ids_flat, return_inverse=True)
+                 for i, motion_id in enumerate(unique_ids):
+                      # Ensure motion_id is valid before indexing
+                     if motion_id < 0 or motion_id >= self.num_motions:
+                         log.error(f"Invalid motion ID {motion_id} during fallback scatter_mean. Skipping.")
+                         continue
+                     mask = (motion_ids_flat == motion_id)
+                     if mask.sum() > 0: # Ensure there are scores to average
+                         batch_motion_scores[motion_id] = step_scores[mask].mean()
+
+
+            # Apply EMA update
+            alpha = self.plr_config.ema_alpha
+            self.motion_scores = (1.0 - alpha) * self.motion_scores + alpha * batch_motion_scores
+            # Ensure scores aren't NaN after update
+            self.motion_scores = torch.nan_to_num(self.motion_scores, nan=0.0)
+
+
+            # --- Store Sampled IDs for Staleness ---
+            # Get unique motion IDs sampled in this batch
+            # Ensure motion_ids_flat is valid before calling unique
+            if motion_ids_flat.numel() > 0:
+                self._last_sampled_motion_ids_in_batch = torch.unique(motion_ids_flat)
+            else:
+                self._last_sampled_motion_ids_in_batch = None
+
+
+        # --- Update Staleness (Happens *before* next sampling) ---
+        if self._last_sampled_motion_ids_in_batch is not None and self._last_sampled_motion_ids_in_batch.numel() > 0:
+             self.motion_staleness += 1.0 # Increment staleness for all
+             # Ensure indices are valid before using them for assignment
+             valid_sampled_ids = self._last_sampled_motion_ids_in_batch[
+                 (self._last_sampled_motion_ids_in_batch >= 0) & (self._last_sampled_motion_ids_in_batch < self.num_motions)
+             ]
+             if valid_sampled_ids.numel() > 0:
+                # Reset staleness for motions sampled in the *last* batch
+                self.motion_staleness[valid_sampled_ids] = 0.0
+             self._last_sampled_motion_ids_in_batch = None # Clear it
+
+    def _update_motion_sampling_weights(self):
+        """Calculates and pushes new PLR weights to the MotionManager."""
+        if not self.plr_enabled:
+            return
+
+        new_weights = self._calculate_plr_weights()
+        if new_weights is not None:
+            self.env.motion_manager.update_sampling_weights(new_weights)
+
+            # --- Add PLR Logging Here ---
+            # Log top K probabilities for inspection
+            self._log_top_k_weights(new_weights, k=5) # Log top 5
+
+            # Optional: Log the entropy of the distribution to see how peaky it gets
+            # We will log this in post_epoch_logging instead for WandB
+
+    # Add a helper for logging topk
+    def _log_top_k_weights(self, weights, k=5):
+        """Logs the top k weights and their indices."""
+        if k <= 0 or weights is None or len(weights) == 0:
+            return {}
+
+        k = min(k, len(weights))
+        top_weights, top_indices = torch.topk(weights, k)
+
+        log_data = {}
+        for i in range(k):
+            log_data[f'plr/top_{i+1}_motion_id'] = top_indices[i].item()
+            log_data[f'plr/top_{i+1}_motion_prob'] = top_weights[i].item()
+
+        # Log basic info
+        log.info(f"PLR Top {k} Probabilities:")
+        for i in range(k):
+            log.info(f"  Motion ID {top_indices[i].item()}: {top_weights[i].item():.4e}")
+
+        return log_data
