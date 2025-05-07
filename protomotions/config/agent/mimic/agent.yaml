@@ -20,7 +20,7 @@ agent:
 
     # ===> ADD PLR CONFIG HERE <===
     plr:
-      enabled: false            # Master switch
+      enabled: true            # Master switch
       strategy: "value_l1"     # Score calculation: 'value_l1', 'gae_abs'
       ema_alpha: 0.1           # EMA factor for score updates (1.0 = replace)
 

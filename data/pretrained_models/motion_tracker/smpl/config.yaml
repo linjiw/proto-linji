@@ -48,7 +48,7 @@ agent:
   config:
 
     plr:
-      enabled: false
+      enabled: true
       strategy: "value_l1"
       ema_alpha: 0.1
       score_transform: "rank"

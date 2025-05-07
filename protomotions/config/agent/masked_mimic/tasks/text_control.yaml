@@ -1,0 +1,78 @@
+# File: protomotions/config/opt/masked_mimic/tasks/text_control.yaml
+
+defaults:
+  # Ensures we are using the defaults from your specific masked_mimic agent.
+  # The path assumes 'masked_mimic/agent.yaml' is relative to 'protomotions/config/agent/'
+  - override /agent: masked_mimic/agent 
+  # You might have a base evaluation task config to inherit from, e.g.:
+  # - /opt/masked_mimic/tasks/base_eval_task
+
+# Agent specific overrides for evaluation behavior
+agent:
+  config:
+    # expert_model_path is typically set to null during evaluation of Stage 2 model.
+    # This should be handled by the eval_overrides in your main agent.yaml,
+    # but can be made explicit here if needed.
+    # expert_model_path: null
+
+    vae:
+      # Use 'zeros' to sample from the mean of the VAE latent space for more deterministic output during evaluation.
+      # This should also be handled by eval_overrides in your main agent.yaml.
+      noise_type: "zeros"
+
+env:
+  config:
+    # Ensure masked mimic components and observations are enabled
+    masked_mimic:
+      enabled: true
+      # --- Text Control Specific Configuration ---
+      # Placeholder for providing text prompts.
+      # How these are processed into embeddings and used depends on your eval_agent.py and environment setup.
+      # If your setup doesn't directly use this, you'd use text labels from your motion_file,
+      # or modify the eval script to inject embeddings from novel text.
+      custom_text_prompts:
+        enabled: true # A flag to indicate this task uses custom prompts
+        prompts:
+          - "a person waves hello"
+          - "a person jumps up and down"
+          - "a person walks forward slowly"
+          - "a person kicks with their right leg"
+          - "a person bows respectfully"
+          - "a person performs a quick salute"
+        # You might need a mechanism to cycle through these prompts or select one.
+
+      masked_mimic_masking:
+        # --- Prioritize Text Input ---
+        # Always try to make text embeddings visible if available for the current "motion" or custom prompt.
+        motion_text_embeddings_visible_prob: 1.0
+
+        # --- Deprioritize Other Conditional Inputs ---
+        # Make "far away" target poses (long-term kinematic goals) not visible.
+        target_pose_visible_prob: 0.0
+
+        joint_masking:
+          # Maximize the chance of having a "time gap" where no near-term future joint targets are visible.
+          # This forces the agent to rely more on other cues like text.
+          # If `with_conditioning_max_gap_probability` is 1.0 (default or set), this should effectively
+          # turn off near-term joint pose targets when text is present.
+          with_conditioning_max_gap_probability: 1.0 # Check this name in your MaskedMimicObs config
+
+          # Further reduce chances of seeing any specific near-term joint targets:
+          masked_mimic_time_gap_probability: 0.95  # High probability of initiating a time gap (no joints visible)
+          masked_mimic_repeat_mask_probability: 0.05 # Low probability of repeating a previous joint mask
+          
+          # Prefer very few or no conditioned joints for near-term poses.
+          force_small_num_conditioned_bodies_prob: 0.9 # High chance to use only 0-3 conditioned bodies
+          force_max_conditioned_bodies_prob: 0.0 # Never force all conditionable bodies to be visible
+
+    # Set a reasonable episode length for observing text-generated motions
+    max_episode_length: 300 # e.g., 10 seconds at 30 FPS
+
+# General evaluation settings often controlled at the command line but can be defaulted here.
+# These are interpreted by the eval_agent.py script.
+headless: false       # Set to true for no rendering (faster, but no visualization)
+num_envs: 1           # Usually evaluate one environment at a time for detailed observation/visualization
+# render: true        # Ensure rendering is on if not default
+
+# If your task needs to point to a specific motion file for text labels (even if using custom prompts for generation)
+# motion_file: /path/to/your/amass_t1_test.yaml # Or your train.yaml if that's where text labels are

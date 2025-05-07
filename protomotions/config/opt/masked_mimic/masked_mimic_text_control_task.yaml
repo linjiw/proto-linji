@@ -1,0 +1,74 @@
+# File: protomotions/config/opt/masked_mimic/masked_mimic_text_control_task.yaml
+
+# defaults:
+#   # Ensures we are using the defaults from your specific masked_mimic agent.
+#   # The path assumes 'masked_mimic/agent.yaml' is relative to 'protomotions/config/agent/'
+#   - override /agent: masked_mimic/agent 
+#   # You might have a base evaluation task config to inherit from, e.g.:
+#   # - /opt/masked_mimic/tasks/base_eval_task
+
+# # Agent specific overrides for evaluation behavior
+agent:
+  config:
+    # expert_model_path is typically set to null during evaluation of Stage 2 model.
+    # This should be handled by the eval_overrides in your main agent.yaml,
+    # but can be made explicit here if needed.
+    # expert_model_path: null
+
+    vae:
+      # Correctly set for deterministic evaluation output
+      noise_type: "zeros"
+
+env:
+  config:
+    # Ensure masked mimic components and observations are enabled
+    masked_mimic:
+      enabled: true
+      # --- Text Control Specific Configuration ---
+      # Placeholder for providing text prompts.
+      # How these are processed into embeddings and used depends on your eval_agent.py and environment setup.
+      # If your setup doesn't directly use this, you'd use text labels from your motion_file,
+      # or modify the eval script to inject embeddings from novel text.
+      custom_text_prompts:
+        enabled: true
+        prompts:
+          - "a person waves hello"
+          - "a person jumps up and down"
+          - "a person walks forward slowly"
+          - "a person kicks with their right leg"
+          - "a person bows respectfully"
+          - "a person performs a quick salute"
+        # You might need a mechanism to cycle through these prompts or select one.
+
+      masked_mimic_masking:
+        # --- Prioritize Text Input ---
+        motion_text_embeddings_visible_prob: 1.0
+
+        # --- Deprioritize Other Conditional Inputs ---
+        target_pose_visible_prob: 0.0
+
+        joint_masking:
+          # This is key for text-only. If text is a "long-term conditioning signal",
+          # MaskedMimicObs.py uses this. If set to 1.0, it should try to mask out all 
+          # near-term joints when text is active.
+          with_conditioning_max_gap_probability: 1.0
+
+          # Backup if the above doesn't fully mask joints, or if text isn't seen as long-term signal:
+          masked_mimic_time_gap_probability: 0.95
+          masked_mimic_repeat_mask_probability: 0.05
+          
+          # Prefer very few or no conditioned joints for near-term poses.
+          force_small_num_conditioned_bodies_prob: 0.9
+          force_max_conditioned_bodies_prob: 0.0
+
+    # Set a reasonable episode length for observing text-generated motions
+    max_episode_length: 300 # e.g., 10 seconds at 30 FPS
+
+# General evaluation settings often controlled at the command line but can be defaulted here.
+# These are interpreted by the eval_agent.py script.
+headless: false       # Set to true for no rendering (faster, but no visualization)
+num_envs: 1           # Usually evaluate one environment at a time for detailed observation/visualization
+# render: true        # Ensure rendering is on if not default
+
+# If your task needs to point to a specific motion file for text labels (even if using custom prompts for generation)
+# motion_file: /path/to/your/amass_t1_test.yaml # Or your train.yaml if that's where text labels are

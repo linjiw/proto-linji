@@ -1,0 +1,30 @@
+# @package _global_.agent.config.model
+
+# Define the CVAE model structure
+_target_: protomotions.agents.langwbc.model.LangWBCModel
+
+# Input/Output Sizes (These might need slight adjustment based on env/history)
+# Assuming obs_size is based on proprioception defined in LangWBC paper Appendix A (90 dims)
+# Assuming action_size is based on teacher action dim (27 dims)
+obs_size: 90      # Size of *one* proprioceptive observation step
+action_size: 27   # Size of the output action vector
+history_len: ${agent.config.history_len} # Get from agent config
+
+# CLIP Embedding Size
+text_embedding_dim: 512 # Standard for clip-vit-base-patch32
+
+# CVAE Latent Dimension
+latent_dim: 128
+
+# Encoder MLP layers (Example - adjust based on paper/experiments)
+# Input: Flattened history (hist_len * obs_size) + text_embedding_dim
+encoder_hidden_dims: [2048, 1024, 512]
+
+# Decoder MLP layers (Example - adjust based on paper/experiments)
+# Input: latent_dim + current obs_size
+decoder_hidden_dims: [512, 1024, 2048]
+
+# Optimizer for the CVAE Student Model
+optimizer:
+  _target_: torch.optim.Adam
+  lr: 1e-4 # Learning rate for the student

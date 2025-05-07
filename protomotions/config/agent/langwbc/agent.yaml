@@ -1,0 +1,39 @@
+# @package _global_
+
+defaults:
+  - /agent/ppo/agent # Inherit basic PPO structure/params (like num_envs, save_every, etc.) but override relevant parts
+  - model: langwbc # Specify the model config file to use
+
+agent:
+  _target_: protomotions.agents.langwbc.agent.LangWBCAgent # Target the new agent class
+  _recursive_: False
+  config:
+    # === LangWBC Specific Config ===
+    teacher_model_path: ??? # REQUIRED: Path to the directory containing the trained teacher checkpoint (e.g., results/my_smpl_full_body_tracker_phase1/)
+    teacher_checkpoint_name: "score_based.ckpt" # Or "last.ckpt" - the specific checkpoint file name
+    clip_model_name: "openai/clip-vit-base-patch32" # Or another CLIP model
+
+    # History params (as per paper: 2 sec @ 10Hz = 20 steps)
+    history_len: 20 # Number of past observation steps
+    history_interval: 5 # Store obs every 5 simulation steps (assuming 50Hz sim -> 10Hz sampling)
+
+    # CVAE KL Divergence Weight
+    lambda_kl: 0.01 # Weight for the KL term in the loss (tune this)
+
+    # Override PPO defaults not relevant for BC/CVAE student
+    gamma: null
+    tau: null
+    e_clip: null
+    clip_critic_loss: false
+    bounds_loss_coef: 0
+    normalize_values: false
+    normalize_advantage: false
+    task_reward_w: 0 # Rewards not used for student training directly
+    num_mini_epochs: 5 # Or adjust as needed for BC stability
+    batch_size: 8192 # Adjust based on memory
+
+    model: ${agent.config.model} # Reference the model config defined below or in model.yaml
+
+    # Add any other LangWBC specific agent parameters here
+
+# Note: We inherit eval_metric_keys etc. from PPO default, adjust if needed

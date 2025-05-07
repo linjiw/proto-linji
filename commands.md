@@ -1,4 +1,3 @@
-```
 CUDA_VISIBLE_DEVICES=1 python protomotions/train_agent.py +exp=full_body_tracker/mlp_single_motion_amp_flat_terrain +robot=t1 +simulator=isaacgym motion_file=/var/local/zifan/motion_data_x/CMU-t1_retargeted/01/01_01_stageii.npy +experiment_name=mlp_full_body_tracker_t1_0401 num_envs=4096 +opt=wandb ngpu=1
 ```
 
@@ -95,3 +94,44 @@ python protomotions/train_agent.py \
 
 
 python protomotions/train_agent.py     +exp=full_body_tracker/transformer_flat_terrain     +robot=t1     +simulator=isaacgym     motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml     +experiment_name=t1_full_body_tracker_plr_v1     +opt=wandb
+
+
+HYDRA_FULL_ERROR=1 python protomotions/train_agent.py +exp=masked_mimic/flat_terrain +robot=t1 +simulator=isaacgym motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml agent.config.expert_model_path=/home/linji/nfs/ProtoMotions-T1/results/t1_full_body_tracker_plr_v2/ +experiment_name=t1_masked_mimic_plr_v2 +opt=wandb
+
+HYDRA_FULL_ERROR=1 python protomotions/train_agent.py +exp=masked_mimic/flat_terrain +robot=t1 +simulator=isaacgym motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml agent.config.expert_model_path=/home/linji/nfs/ProtoMotions-T1/results/t1_full_body_tracker_plr_v2/ +experiment_name=t1_masked_mimic_plr_v2 +opt=wandb ++num_envs=256
+
+python protomotions/eval_agent.py +robot=t1 +simulator=isaacgym +checkpoint=results/t1_masked_mimic_plr_v2/last.ckpt +motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml +opt=[masked_mimic/tasks/user_control]
+
+(protomotions) linji@robotixx-c2-v101:~/nfs/ProtoMotions-T1$ python protomotions/eval_agent.py +robot=t1 +simulator=isaacgym +checkpoint=results/t1_masked_mimic_plr_v2/last.ckpt +motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml
+
+# Evaluate MaskedMimic (Stage 2) for Text-to-Motion
+python protomotions/eval_agent.py \
+    +robot=t1 \
+    +simulator=isaacgym \
+    +checkpoint=results/t1_masked_mimic_plr_v2/last.ckpt \
+    +motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml \
+    +opt=[masked_mimic/tasks/text_control] \
+    ++num_envs=1 \
+    headless=False
+
+python protomotions/eval_agent.py \
+    +robot=t1 \
+    +simulator=isaacgym \
+    +checkpoint=results/t1_masked_mimic_plr_v2/last.ckpt \
+    +motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml \
+    +opt=[masked_mimic/constraints/hands]
+
+
+
+python protomotions/eval_agent.py \
+    +robot=t1 \
+    +simulator=isaacgym \
+    +checkpoint=results/t1_masked_mimic_plr_v2/last.ckpt \
+    +motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml \
+    +opt=[masked_mimic/masked_mimic_text_control_task]
+
+
+HYDRA_FULL_ERROR=1 python protomotions/train_agent.py +exp=masked_mimic/flat_terrain +robot=t1 +simulator=isaacgym motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml agent.config.expert_model_path=/home/linji/nfs/ProtoMotions-T1/results/t1_full_body_tracker_plr_v2/ +experiment_name=t1_masked_mimic_plr_v2_debug_text +opt=wandb ++num_envs=256 agent.config.max_epochs=1
+
+
+HYDRA_FULL_ERROR=1 python protomotions/eval_agent.py     +robot=t1     +simulator=isaacgym     +checkpoint=results/t1_masked_mimic_plr_v2/last.ckpt     +motion_file=/home/linji/nfs/ProtoMotions-T1/motion_data_x/amass_t1_train.yaml     +opt=[masked_mimic/masked_mimic_text_control_task]

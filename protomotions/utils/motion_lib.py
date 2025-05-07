@@ -517,10 +517,15 @@ class MotionLib(DeviceDtypeModuleMixin):
                         )
                         outputs = model(**inputs)
                         pooled_output = outputs.pooler_output  # pooled (EOS token) states
+                        print(f"[MotionLib DEBUG] Generated XCLIP embedding for sub-motion {f}, label: '{motion_labels[f][0]}'")
                         valid_text_embeddings.append(pooled_output)
                         valid_has_text_embeddings.append(True)
                 else:
-                    valid_text_embeddings.append(torch.zeros((3, 512), dtype=torch.float32))
+                    if not self.create_text_embeddings:
+                        print(f"[MotionLib DEBUG] NOT generating embedding for sub-motion {f} (create_text_embeddings is False). Appending zeros.")
+                    elif motion_labels[f][0] == "":
+                        print(f"[MotionLib DEBUG] NOT generating embedding for sub-motion {f} (label is empty). Appending zeros.")
+                    valid_text_embeddings.append(torch.zeros((3, 512), dtype=torch.float32)) # Ensure this matches expected structure if you have 3 labels per motion
                     valid_has_text_embeddings.append(False)
             except Exception as e:
                 print(f"DEBUG LoadMotions: f={f} EXCEPTION during processing: {e}", flush=True)
@@ -570,6 +575,12 @@ class MotionLib(DeviceDtypeModuleMixin):
             text_embeddings=text_embeddings_tensor,
             has_text_embeddings=has_text_embeddings_tensor,
         )
+        print(f"[MotionLib DEBUG] MotionLib state initialized.")
+        if text_embeddings_tensor.numel() > 0 and has_text_embeddings_tensor.any():
+            print(f"[MotionLib DEBUG] Total text embeddings loaded: {has_text_embeddings_tensor.sum().item()} non-empty out of {has_text_embeddings_tensor.size(0)}")
+            print(f"[MotionLib DEBUG] Shape of final text_embeddings_tensor: {text_embeddings_tensor.shape}")
+        else:
+            print(f"[MotionLib DEBUG] No valid text embeddings were loaded or generated into the final tensor.")
 
         # --- Create concatenated tensors from the VALID motions ---
         # NOTE: This part moves from __init__ to the end of _load_motions

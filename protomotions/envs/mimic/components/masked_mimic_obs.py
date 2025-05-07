@@ -145,6 +145,13 @@ class MaskedMimicObs(BaseComponent):
         self.historical_obs_config = self.config.historical_obs
         self.motion_text_config = self.config.motion_text_embeddings
 
+        print("[MaskedMimicObs DEBUG] Initialized MaskedMimicObs component.")
+        if hasattr(self.config, 'custom_text_prompts') and self.config.custom_text_prompts.enabled:
+            print(f"[MaskedMimicObs DEBUG] Custom text prompts are enabled in config.")
+            print(f"[MaskedMimicObs DEBUG] Configured prompts: {self.config.custom_text_prompts.prompts}")
+        else:
+            print("[MaskedMimicObs DEBUG] Custom text prompts are NOT enabled or configured in env.config.masked_mimic.")
+
     def sample_body_masks(self, num_envs, env_ids=None, reset_track=False):
         """Samples body masks for masking joint information."""
         if not reset_track:
@@ -273,18 +280,35 @@ class MaskedMimicObs(BaseComponent):
     def reset_track(self, env_ids):
         """Resets masks and target poses when a new motion track starts."""
         new_motion_ids, new_times = self.env.motion_manager.get_respawn_info(env_ids)
+        print(f"[MaskedMimicObs DEBUG] reset_track called for env_ids: {env_ids}")
+        print(f"[MaskedMimicObs DEBUG] Corresponding new_motion_ids: {new_motion_ids}")
 
         # Sample for each env whether it should be conditioned using text
         visible_text_embeddings = (
             torch.bernoulli(self.visible_text_embeddings_prob[: len(env_ids)]) > 0
         )
-        self.motion_text_embeddings[env_ids] = (
-            self.env.motion_lib.sample_text_embeddings(new_motion_ids)
-        )
+        # Potentially load text embeddings from motion library
+        # THIS IS WHERE YOU WOULD INTERCEPT OR PROVIDE YOUR CUSTOM TEXT EMBEDDINGS
+        # if your eval_agent.py or task logic isn't doing it already.
+        loaded_text_embeddings = self.env.motion_lib.sample_text_embeddings(new_motion_ids)
+        print(f"[MaskedMimicObs DEBUG] Shape of text embeddings loaded from motion_lib: {loaded_text_embeddings.shape}")
+        # Example: print first embedding if non-zero, for one env
+        if len(env_ids) > 0 and loaded_text_embeddings.numel() > 0 :
+            print(f"[MaskedMimicObs DEBUG] Sample text embedding from motion_lib (env {env_ids[0]}): {loaded_text_embeddings[0, :10]}...") # Print first 10 dims
+
+        # TODO: Add logic here if you want to inject embeddings from self.config.custom_text_prompts.
+        # This would involve:
+        # 1. Selecting a prompt from self.config.custom_text_prompts.prompts.
+        # 2. Using a text encoder (e.g., XCLIP) to get its embedding.
+        # 3. Overwriting loaded_text_embeddings for the relevant env_ids.
+        # print("[MaskedMimicObs DEBUG] Placeholder: If custom prompts were used, they'd be processed here.")
+
+        self.motion_text_embeddings[env_ids] = loaded_text_embeddings
         has_text = self.env.motion_lib.state.has_text_embeddings[new_motion_ids]
         self.motion_text_embeddings_mask[env_ids] = visible_text_embeddings.view(
             -1, 1
         ) & has_text.view(-1, 1)
+        print(f"[MaskedMimicObs DEBUG] motion_text_embeddings_mask for env_ids {env_ids}: {self.motion_text_embeddings_mask[env_ids].view(-1)}")
 
         # Sample for each env whether it should be conditioned using a "far away" target pose
         visible_target_pose = (
@@ -602,7 +626,7 @@ class MaskedMimicObs(BaseComponent):
 
     def get_obs(self):
         """Returns the masked mimic observations."""
-        return {
+        obs_dict = {
             "masked_mimic_target_poses": self.masked_mimic_target_poses.clone(),
             "masked_mimic_target_bodies_masks": self.masked_mimic_target_bodies_masks.clone(),
             "masked_mimic_target_poses_masks": self.masked_mimic_target_poses_masks.clone(),
@@ -610,3 +634,7 @@ class MaskedMimicObs(BaseComponent):
             "motion_text_embeddings_mask": self.motion_text_embeddings_mask.clone(),
             "historical_pose_obs": self.historical_pose_obs.clone(),
         }
+        if obs_dict["motion_text_embeddings_mask"][0].item(): # Print for the first env if mask is true
+            print(f"[MaskedMimicObs DEBUG] get_obs: Text embedding for env 0 (first 10 dims): {obs_dict['motion_text_embeddings'][0, :10]}...")
+            print(f"[MaskedMimicObs DEBUG] get_obs: Text embedding mask for env 0: {obs_dict['motion_text_embeddings_mask'][0]}")
+        return obs_dict

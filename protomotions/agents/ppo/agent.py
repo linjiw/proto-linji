@@ -431,19 +431,16 @@ class PPO:
                 self.experience_buffer.batch_update_data("advantages", advantages)
 
             # --- Model Optimization ---
-            # This call updates the actor and critic networks
             training_log_dict = self.optimize_model()
             training_log_dict["epoch"] = self.current_epoch
 
             # --- PLR: Update State and Sampling Weights ---
+            original_motion_weights = None # Variable to store PLR weights
             if self.plr_enabled:
-                # Calculates scores from the *just processed* batch (via self.storage)
-                # and updates EMA score state. Updates staleness based on the
-                # sampled IDs from that batch.
                 self._update_plr_state()
-                # Calculates new weights based on updated scores/staleness
-                # and pushes them to MotionManager for the *next* data collection phase.
-                self._update_motion_sampling_weights()
+                # Store the current PLR weights *before* potentially overriding for eval
+                original_motion_weights = self.env.motion_manager.motion_weights.clone()
+                self._update_motion_sampling_weights() # Update happens based on last batch
                 log.info(f"PLR state and weights updated for epoch {self.current_epoch}")
 
             self.fabric.call("after_train", self) # Callbacks after training step
@@ -461,8 +458,30 @@ class PPO:
                 and self.current_epoch > 0
                 and self.current_epoch % self.config.eval_metrics_every == 0
             ):
+                if self.plr_enabled:
+                    # Store the current PLR-influenced weights if not already stored
+                    # (Might be slightly different than after _update_motion_sampling_weights if called earlier)
+                    # It's safer to grab them right before overriding.
+                    if original_motion_weights is None: # Should ideally be set above
+                         original_motion_weights = self.env.motion_manager.motion_weights.clone()
+
+                    # Create and set uniform weights for evaluation
+                    log.info("PLR enabled: Setting uniform weights for evaluation.")
+                    num_motions = self.env.motion_lib.num_motions()
+                    uniform_weights = torch.ones(num_motions, dtype=torch.float32, device=self.device) / num_motions
+                    self.env.motion_manager.update_sampling_weights(uniform_weights)
+
+                # Perform evaluation using the (potentially overridden) weights
                 eval_log_dict, evaluated_score = self.calc_eval_metrics()
                 evaluated_score = self.fabric.broadcast(evaluated_score, src=0)
+
+                # Restore PLR weights after evaluation
+                if self.plr_enabled and original_motion_weights is not None:
+                    log.info("PLR enabled: Restoring PLR weights after evaluation.")
+                    self.env.motion_manager.update_sampling_weights(original_motion_weights)
+                    original_motion_weights = None # Clear stored weights
+
+                # Process evaluation results
                 if evaluated_score is not None:
                     if (
                         self.best_evaluated_score is None
@@ -696,6 +715,22 @@ class PPO:
     @torch.no_grad()
     def evaluate_policy(self):
         self.eval()
+
+        # === ADDED: Force uniform weights for standalone evaluation if PLR was enabled ===
+        if self.plr_enabled:
+            log.info("PLR was enabled during training. Forcing uniform motion weights for standalone evaluation.")
+            num_motions = self.env.motion_lib.num_motions()
+            if num_motions > 0: # Avoid division by zero if no motions
+                uniform_weights = torch.ones(num_motions, dtype=torch.float32, device=self.device) / num_motions
+                # Ensure MotionManager exists before updating
+                if hasattr(self.env, 'motion_manager'):
+                     self.env.motion_manager.update_sampling_weights(uniform_weights)
+                else:
+                     log.warning("Cannot set uniform weights for evaluation: env.motion_manager not found.")
+            else:
+                 log.warning("Cannot set uniform weights for evaluation: num_motions is zero.")
+        # ===============================================================================
+
         done_indices = None  # Force reset on first entry
         step = 0
         obs_hist = []
